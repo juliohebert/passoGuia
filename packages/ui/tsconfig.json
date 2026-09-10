@@ -1,0 +1,4 @@
+{
+  "extends": "@passoguia/configuracao-typescript/react.json",
+  "include": ["src"]
+}

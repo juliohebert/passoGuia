@@ -1,0 +1,130 @@
+:root {
+  font-family: system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+  color: #1e293b;
+}
+
+body {
+  margin: 0;
+  padding: 24px;
+}
+
+.painel {
+  max-width: 640px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.linha {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+input[type="url"] {
+  flex: 1;
+  min-width: 220px;
+  padding: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+}
+
+button {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #fff;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.status {
+  font-weight: 600;
+  margin: 0;
+}
+
+.status[data-estado="gravando"] {
+  color: #dc2626;
+}
+
+.status[data-estado="finalizada"] {
+  color: #475569;
+}
+
+.erro {
+  color: #dc2626;
+  margin: 0;
+}
+
+.secao-log {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.secao-log h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.lista-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 11px;
+  color: #475569;
+  word-break: break-word;
+}
+
+.lista-log li {
+  padding: 1px 0;
+}
+
+.passos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.passos figure {
+  margin: 0;
+}
+
+.passos img {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  display: block;
+}
+
+.passos figcaption {
+  font-size: 12px;
+  color: #334155;
+  margin-bottom: 4px;
+}
+
+.marca {
+  display: inline-block;
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #fff;
+}
+
+.marca-auto {
+  background: #0f766e;
+}
+
+.marca-manual {
+  background: #64748b;
+}

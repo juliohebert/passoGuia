@@ -1,0 +1,9 @@
+{
+  "extends": "@passoguia/configuracao-typescript/base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": []
+  },
+  "include": ["src"]
+}

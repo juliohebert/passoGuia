@@ -1,0 +1,58 @@
+:root {
+  font-family: system-ui, -apple-system, sans-serif;
+  color: #1e293b;
+}
+
+body {
+  margin: 0;
+  padding: 24px;
+}
+
+#alvo {
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.linha {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+button {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #fff;
+  cursor: pointer;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+
+input {
+  padding: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+}
+
+.rolagem {
+  height: 160px;
+  overflow: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.espaco {
+  height: 600px;
+}

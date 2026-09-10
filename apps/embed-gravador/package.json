@@ -1,0 +1,21 @@
+{
+  "name": "@passoguia/embed-gravador",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/indice.ts --bundle --format=iife --global-name=GravadorPassoGuia --outfile=dist/gravador-passoguia.js",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@passoguia/nucleo-gravador": "workspace:*"
+  },
+  "devDependencies": {
+    "@passoguia/configuracao-eslint": "workspace:*",
+    "@passoguia/configuracao-typescript": "workspace:*",
+    "esbuild": "^0.25.0",
+    "eslint": "^9.18.0",
+    "typescript": "^5.7.3"
+  }
+}

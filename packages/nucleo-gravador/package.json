@@ -1,0 +1,21 @@
+{
+  "name": "@passoguia/nucleo-gravador",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/indice.ts",
+  "types": "./src/indice.ts",
+  "exports": {
+    ".": "./src/indice.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@passoguia/configuracao-eslint": "workspace:*",
+    "@passoguia/configuracao-typescript": "workspace:*",
+    "eslint": "^9.18.0",
+    "typescript": "^5.7.3"
+  }
+}
