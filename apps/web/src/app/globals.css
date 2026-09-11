@@ -1,1 +1,13 @@
 @import "tailwindcss";
+
+@theme {
+  --color-roxo-50: #f4f0fd;
+  --color-roxo-100: #e9e0fb;
+  --color-roxo-200: #d6c7f6;
+  --color-roxo-300: #b89ff0;
+  --color-roxo-400: #9a78ec;
+  --color-roxo-500: #8257e5;
+  --color-roxo-600: #6f48c9;
+  --color-roxo-700: #5a3aa4;
+  --color-fundo: #f8f7fc;
+}
