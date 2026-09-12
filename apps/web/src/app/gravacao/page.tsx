@@ -61,6 +61,12 @@ export default function PaginaGravacao() {
   const passos = [...passosOrdenados, ...manuais];
   const totalPassos = automaticos.length + manuais.length;
 
+  // Resposta direta do PATCH de anotações (editor) — não depende do SSE
+  // republicar para o card refletir a mudança na hora.
+  function aoPassoAtualizado(atualizado: Passo) {
+    setAutomaticos((atual) => atual.map((p) => (p.id === atualizado.id ? atualizado : p)));
+  }
+
   function adicionarEtapa() {
     const tituloLimpo = titulo.trim();
     if (tituloLimpo === "") {
@@ -197,7 +203,7 @@ export default function PaginaGravacao() {
         ) : (
           <div className="space-y-3">
             {passos.map((passo) => (
-              <PassoGravado key={passo.id} passo={passo} />
+              <PassoGravado key={passo.id} passo={passo} onPassoAtualizado={aoPassoAtualizado} />
             ))}
           </div>
         )}

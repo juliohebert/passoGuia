@@ -54,6 +54,72 @@ export class ServicoSessaoGravacao {
     return [...this.obterOuCriar(sessaoId).passos].sort((a, b) => a.ordem - b.ordem);
   }
 
+  /**
+   * Salva as máscaras DEFINITIVAS de um passo (editor manual de privacidade).
+   * Substitui a lista inteira (o editor manda o estado final, não um diff) —
+   * nunca toca em `imagemRedigida`/`sugestoesMascara` (screenshot original e
+   * sugestões automáticas continuam preservados). `undefined` quando o passo
+   * não existe na sessão (o controller decide como responder).
+   */
+  atualizarMascaras(
+    sessaoId: string,
+    correlacaoId: string,
+    mascaras: PassoGravado["mascarasAplicadas"],
+  ): PassoGravado | undefined {
+    const estado = this.obterOuCriar(sessaoId);
+    const indice = estado.passos.findIndex((p) => p.correlacaoId === correlacaoId);
+    if (indice === -1) {
+      return undefined;
+    }
+    const atual = estado.passos[indice];
+    if (!atual) {
+      return undefined;
+    }
+    const atualizado: PassoGravado = { ...atual, mascarasAplicadas: mascaras };
+    estado.passos[indice] = atualizado;
+    if (DIAGNOSTICO_ATIVO) {
+      console.info("[diag][api] máscaras atualizadas + SSE emitido", {
+        correlacaoId,
+        sessaoId,
+        totalMascaras: mascaras?.length ?? 0,
+      });
+    }
+    estado.canal.next(atualizado);
+    return atualizado;
+  }
+
+  /**
+   * Salva as anotações DEFINITIVAS de um passo (editor de imagem: máscara/
+   * destaque/seta/número). Mesma política de `atualizarMascaras`: substitui
+   * a lista inteira, nunca toca em `imagemRedigida`/`sugestoesMascara`.
+   */
+  atualizarAnotacoes(
+    sessaoId: string,
+    correlacaoId: string,
+    anotacoes: PassoGravado["anotacoesImagem"],
+  ): PassoGravado | undefined {
+    const estado = this.obterOuCriar(sessaoId);
+    const indice = estado.passos.findIndex((p) => p.correlacaoId === correlacaoId);
+    if (indice === -1) {
+      return undefined;
+    }
+    const atual = estado.passos[indice];
+    if (!atual) {
+      return undefined;
+    }
+    const atualizado: PassoGravado = { ...atual, anotacoesImagem: anotacoes };
+    estado.passos[indice] = atualizado;
+    if (DIAGNOSTICO_ATIVO) {
+      console.info("[diag][api] anotações atualizadas + SSE emitido", {
+        correlacaoId,
+        sessaoId,
+        totalAnotacoes: anotacoes?.length ?? 0,
+      });
+    }
+    estado.canal.next(atualizado);
+    return atualizado;
+  }
+
   /** Fluxo (RxJS) de passos novos da sessão — base do endpoint SSE. */
   fluxoDePassos(sessaoId: string): Observable<PassoGravado> {
     return this.obterOuCriar(sessaoId).canal.asObservable();

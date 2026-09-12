@@ -1,8 +1,20 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, Param, Post, Sse, type MessageEvent } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  NotFoundException,
+  Param,
+  Patch,
+  Post,
+  Sse,
+  type MessageEvent,
+} from "@nestjs/common";
 import { map, type Observable } from "rxjs";
 import type { PassoGravado, PassoRecebido, ResumoSessao } from "./contratos";
 import { ServicoSessaoGravacao } from "./sessao-gravacao.service";
-import { validarPassoRecebido } from "./validacao";
+import { validarAnotacoesImagem, validarMascarasAplicadas, validarPassoRecebido } from "./validacao";
 
 // DIAGNOSTICO TEMP: nunca ativo em produção.
 const DIAGNOSTICO_ATIVO = process.env.NODE_ENV !== "production";
@@ -46,6 +58,66 @@ export class ControladorSessaoGravacao {
   @Get(":sessaoId/passos")
   listarPassos(@Param("sessaoId") sessaoId: string): PassoGravado[] {
     return this.servico.listarPassos(sessaoId);
+  }
+
+  /**
+   * Editor manual de privacidade: salva a lista DEFINITIVA de máscaras de um
+   * passo (substitui a anterior por inteiro). Nunca toca no screenshot
+   * original nem nas sugestões automáticas.
+   */
+  @Patch(":sessaoId/passos/:correlacaoId/mascaras")
+  atualizarMascaras(
+    @Param("sessaoId") sessaoId: string,
+    @Param("correlacaoId") correlacaoId: string,
+    @Body() corpo: unknown,
+  ): PassoGravado {
+    let mascaras: ReturnType<typeof validarMascarasAplicadas>;
+    try {
+      mascaras = validarMascarasAplicadas(corpo);
+    } catch (erro) {
+      if (DIAGNOSTICO_ATIVO) {
+        console.warn("[diag][api] payload de máscaras rejeitado na validação", {
+          motivo: erro instanceof Error ? erro.message : String(erro),
+          corpo,
+        });
+      }
+      throw new BadRequestException(erro instanceof Error ? erro.message : "payload inválido");
+    }
+    const atualizado = this.servico.atualizarMascaras(sessaoId, correlacaoId, mascaras);
+    if (!atualizado) {
+      throw new NotFoundException(`passo ${correlacaoId} não encontrado na sessão ${sessaoId}`);
+    }
+    return atualizado;
+  }
+
+  /**
+   * Editor de imagem (máscara/destaque/seta/número): salva a lista
+   * DEFINITIVA de anotações de um passo (substitui a anterior por inteiro).
+   * Nunca toca no screenshot original nem nas sugestões automáticas.
+   */
+  @Patch(":sessaoId/passos/:correlacaoId/anotacoes")
+  atualizarAnotacoes(
+    @Param("sessaoId") sessaoId: string,
+    @Param("correlacaoId") correlacaoId: string,
+    @Body() corpo: unknown,
+  ): PassoGravado {
+    let anotacoes: ReturnType<typeof validarAnotacoesImagem>;
+    try {
+      anotacoes = validarAnotacoesImagem(corpo);
+    } catch (erro) {
+      if (DIAGNOSTICO_ATIVO) {
+        console.warn("[diag][api] payload de anotações rejeitado na validação", {
+          motivo: erro instanceof Error ? erro.message : String(erro),
+          corpo,
+        });
+      }
+      throw new BadRequestException(erro instanceof Error ? erro.message : "payload inválido");
+    }
+    const atualizado = this.servico.atualizarAnotacoes(sessaoId, correlacaoId, anotacoes);
+    if (!atualizado) {
+      throw new NotFoundException(`passo ${correlacaoId} não encontrado na sessão ${sessaoId}`);
+    }
+    return atualizado;
   }
 
   @Sse(":sessaoId/eventos")
