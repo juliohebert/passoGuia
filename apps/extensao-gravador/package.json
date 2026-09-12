@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "esbuild src/servico.ts --bundle --format=esm --outfile=dist/servico.js && esbuild src/conteudo.ts --bundle --format=iife --outfile=dist/conteudo.js && esbuild src/diagnostico.ts --bundle --format=iife --outfile=dist/diagnostico.js",
+    "dev": "node scripts/watch.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
