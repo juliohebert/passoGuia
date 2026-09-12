@@ -1,44 +1,36 @@
 import { randomUUID } from "node:crypto";
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { Subject, type Observable } from "rxjs";
-import type { PassoGravado, PassoRecebido, ResumoSessao } from "./contratos";
+import type { AnotacaoImagem, MascaraAplicada, PassoGravado, PassoRecebido, ResumoSessao } from "./contratos";
+import { REPOSITORIO_SESSAO_GRAVACAO, type RepositorioSessaoGravacao } from "./repositorio-sessao-gravacao";
 
 // DIAGNOSTICO TEMP: nunca ativo em produção.
 const DIAGNOSTICO_ATIVO = process.env.NODE_ENV !== "production";
 
-interface EstadoSessao {
-  sessaoId: string;
-  criadaEm: number;
-  passos: PassoGravado[];
-  canal: Subject<PassoGravado>;
-}
-
 /**
- * Sessão de gravação em memória (sem persistência, sem auth, sem multi-tenant nesta etapa).
- * Uma sessão é criada sob demanda pelo próprio sessaoId — a extensão e a web usam
- * o mesmo id combinado para a prova.
+ * Sessão de gravação — persistência delegada a `RepositorioSessaoGravacao`
+ * (Postgres via Prisma em runtime; em memória nos testes unitários). O
+ * broadcast em tempo real (SSE) continua em memória e por processo (RxJS
+ * `Subject`), independente de onde os passos são persistidos — não há
+ * garantia de entrega entre múltiplas instâncias da API rodando ao mesmo
+ * tempo (limitação conhecida, não resolvida nesta etapa).
  */
 @Injectable()
 export class ServicoSessaoGravacao {
-  private readonly sessoes = new Map<string, EstadoSessao>();
+  private readonly canais = new Map<string, Subject<PassoGravado>>();
 
-  iniciarSessao(sessaoId?: string): ResumoSessao {
+  constructor(
+    @Inject(REPOSITORIO_SESSAO_GRAVACAO) private readonly repositorio: RepositorioSessaoGravacao,
+  ) {}
+
+  async iniciarSessao(sessaoId?: string): Promise<ResumoSessao> {
     const id = typeof sessaoId === "string" && sessaoId.trim() !== "" ? sessaoId.trim() : randomUUID();
-    const estado = this.obterOuCriar(id);
-    return { sessaoId: estado.sessaoId, criadaEm: estado.criadaEm, totalPassos: estado.passos.length };
+    return this.repositorio.garantirSessao(id);
   }
 
-  registrarPasso(sessaoId: string, recebido: PassoRecebido): PassoGravado {
-    const estado = this.obterOuCriar(sessaoId);
-    const passo: PassoGravado = {
-      ...recebido,
-      id: randomUUID(),
-      ordem: estado.passos.length + 1,
-      origem: "automatico",
-      registradoEm: Date.now(),
-    };
-    estado.passos.push(passo);
-    // DIAGNOSTICO TEMP: confirma persistência em memória + emissão SSE.
+  async registrarPasso(sessaoId: string, recebido: PassoRecebido): Promise<PassoGravado> {
+    const passo = await this.repositorio.registrarPasso(sessaoId, recebido);
+    // DIAGNOSTICO TEMP: confirma persistência + emissão SSE.
     if (DIAGNOSTICO_ATIVO) {
       console.info("[diag][api] passo registrado + SSE emitido", {
         correlacaoId: passo.correlacaoId,
@@ -46,12 +38,12 @@ export class ServicoSessaoGravacao {
         ordem: passo.ordem,
       });
     }
-    estado.canal.next(passo);
+    this.canal(sessaoId).next(passo);
     return passo;
   }
 
-  listarPassos(sessaoId: string): PassoGravado[] {
-    return [...this.obterOuCriar(sessaoId).passos].sort((a, b) => a.ordem - b.ordem);
+  async listarPassos(sessaoId: string): Promise<PassoGravado[]> {
+    return this.repositorio.listarPassos(sessaoId);
   }
 
   /**
@@ -61,30 +53,23 @@ export class ServicoSessaoGravacao {
    * sugestões automáticas continuam preservados). `undefined` quando o passo
    * não existe na sessão (o controller decide como responder).
    */
-  atualizarMascaras(
+  async atualizarMascaras(
     sessaoId: string,
     correlacaoId: string,
-    mascaras: PassoGravado["mascarasAplicadas"],
-  ): PassoGravado | undefined {
-    const estado = this.obterOuCriar(sessaoId);
-    const indice = estado.passos.findIndex((p) => p.correlacaoId === correlacaoId);
-    if (indice === -1) {
+    mascaras: MascaraAplicada[],
+  ): Promise<PassoGravado | undefined> {
+    const atualizado = await this.repositorio.atualizarMascaras(sessaoId, correlacaoId, mascaras);
+    if (!atualizado) {
       return undefined;
     }
-    const atual = estado.passos[indice];
-    if (!atual) {
-      return undefined;
-    }
-    const atualizado: PassoGravado = { ...atual, mascarasAplicadas: mascaras };
-    estado.passos[indice] = atualizado;
     if (DIAGNOSTICO_ATIVO) {
       console.info("[diag][api] máscaras atualizadas + SSE emitido", {
         correlacaoId,
         sessaoId,
-        totalMascaras: mascaras?.length ?? 0,
+        totalMascaras: mascaras.length,
       });
     }
-    estado.canal.next(atualizado);
+    this.canal(sessaoId).next(atualizado);
     return atualizado;
   }
 
@@ -93,44 +78,37 @@ export class ServicoSessaoGravacao {
    * destaque/seta/número). Mesma política de `atualizarMascaras`: substitui
    * a lista inteira, nunca toca em `imagemRedigida`/`sugestoesMascara`.
    */
-  atualizarAnotacoes(
+  async atualizarAnotacoes(
     sessaoId: string,
     correlacaoId: string,
-    anotacoes: PassoGravado["anotacoesImagem"],
-  ): PassoGravado | undefined {
-    const estado = this.obterOuCriar(sessaoId);
-    const indice = estado.passos.findIndex((p) => p.correlacaoId === correlacaoId);
-    if (indice === -1) {
+    anotacoes: AnotacaoImagem[],
+  ): Promise<PassoGravado | undefined> {
+    const atualizado = await this.repositorio.atualizarAnotacoes(sessaoId, correlacaoId, anotacoes);
+    if (!atualizado) {
       return undefined;
     }
-    const atual = estado.passos[indice];
-    if (!atual) {
-      return undefined;
-    }
-    const atualizado: PassoGravado = { ...atual, anotacoesImagem: anotacoes };
-    estado.passos[indice] = atualizado;
     if (DIAGNOSTICO_ATIVO) {
       console.info("[diag][api] anotações atualizadas + SSE emitido", {
         correlacaoId,
         sessaoId,
-        totalAnotacoes: anotacoes?.length ?? 0,
+        totalAnotacoes: anotacoes.length,
       });
     }
-    estado.canal.next(atualizado);
+    this.canal(sessaoId).next(atualizado);
     return atualizado;
   }
 
   /** Fluxo (RxJS) de passos novos da sessão — base do endpoint SSE. */
   fluxoDePassos(sessaoId: string): Observable<PassoGravado> {
-    return this.obterOuCriar(sessaoId).canal.asObservable();
+    return this.canal(sessaoId).asObservable();
   }
 
-  private obterOuCriar(sessaoId: string): EstadoSessao {
-    let estado = this.sessoes.get(sessaoId);
-    if (!estado) {
-      estado = { sessaoId, criadaEm: Date.now(), passos: [], canal: new Subject<PassoGravado>() };
-      this.sessoes.set(sessaoId, estado);
+  private canal(sessaoId: string): Subject<PassoGravado> {
+    let canal = this.canais.get(sessaoId);
+    if (!canal) {
+      canal = new Subject<PassoGravado>();
+      this.canais.set(sessaoId, canal);
     }
-    return estado;
+    return canal;
   }
 }
