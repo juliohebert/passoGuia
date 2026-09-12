@@ -32,11 +32,15 @@ export interface PassoGravado {
   titulo: string;
   descricao?: string;
   origem: OrigemPasso;
-  temScreenshot: boolean;
+  /** data URL do screenshot — sempre INTACTO (sem blur/máscara automática). Ausente = sem screenshot (manual, ou infraestrutura). */
+  imagemRedigida?: string;
+  /** true quando NÃO existe screenshot (infra) — nunca por decisão de privacidade. */
+  redacaoIncompleta?: boolean;
+  /** Identificador estável para a API (PATCH de máscaras/anotações) — mesmo valor do backend; ausente só em etapas manuais (sem correlacaoId do backend). */
+  correlacaoId?: string;
 }
 
 export interface SessaoGravacao {
   manual: string;
   sistema: string;
-  extensaoConectada: boolean;
 }

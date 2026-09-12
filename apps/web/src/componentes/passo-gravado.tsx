@@ -3,6 +3,33 @@ import { Cartao } from "@/componentes/cartao";
 import { EtiquetaOrigem } from "@/componentes/etiqueta-origem";
 import type { PassoGravado as Passo } from "@/dominio/tipos";
 
+function AreaScreenshot({ passo }: { passo: Passo }) {
+  if (passo.imagemRedigida) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- captura é uma data URL em runtime, vinda da API
+      <img
+        src={passo.imagemRedigida}
+        alt={`captura do passo ${String(passo.ordem)}`}
+        className="block w-full rounded-lg border border-slate-200"
+      />
+    );
+  }
+  if (passo.origem === "manual") {
+    return (
+      <div className="flex aspect-video w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 bg-slate-50 text-xs text-slate-400">
+        <PencilLine className="h-4 w-4" />
+        etapa manual — sem captura
+      </div>
+    );
+  }
+  return (
+    <div className="flex aspect-video w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 bg-slate-50 text-xs text-slate-400">
+      <IconeImagem className="h-4 w-4" />
+      sem captura
+    </div>
+  );
+}
+
 export function PassoGravado({ passo }: { passo: Passo }) {
   return (
     <Cartao className="flex gap-4 p-4 sm:p-5">
@@ -18,17 +45,7 @@ export function PassoGravado({ passo }: { passo: Passo }) {
           <p className="mt-1 text-sm text-slate-500">{passo.descricao}</p>
         ) : null}
         <div className="mt-3 max-w-xl">
-          {passo.temScreenshot ? (
-            <div className="flex aspect-video w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-100 text-xs text-slate-400">
-              <IconeImagem className="h-4 w-4" />
-              screenshot do passo
-            </div>
-          ) : (
-            <div className="flex aspect-video w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 bg-slate-50 text-xs text-slate-400">
-              <PencilLine className="h-4 w-4" />
-              etapa manual — sem captura
-            </div>
-          )}
+          <AreaScreenshot passo={passo} />
         </div>
       </div>
     </Cartao>
