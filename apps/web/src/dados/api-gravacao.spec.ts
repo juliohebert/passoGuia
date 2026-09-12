@@ -1,5 +1,62 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { carregarPassos, salvarMascaras } from "./api-gravacao";
+import { carregarPassos, mesclarPassos, salvarMascaras } from "./api-gravacao";
+import type { PassoGravado } from "@/dominio/tipos";
+
+function passo(id: string, ordem: number): PassoGravado {
+  return { id, ordem, titulo: `Passo ${id}`, origem: "automatico" };
+}
+
+describe("mesclarPassos — causa raiz de cliques rápidos 'sumindo' na tela /gravacao", () => {
+  it("GET atrasado NUNCA descarta passos que já chegaram via SSE antes dele resolver", () => {
+    // Cenário real: 10 cliques rápidos. O GET (snapshot pego no mount) só viu
+    // os 2 primeiros; enquanto isso, o SSE já entregou os passos 3..5 e foram
+    // acumulados no estado local. setAutomaticos(passos) do GET sozinho
+    // apagaria 3, 4 e 5 — mesclarPassos preserva os três.
+    const doGet = [passo("1", 1), passo("2", 2)];
+    const jaAcumuladosViaSSE = [passo("1", 1), passo("2", 2), passo("3", 3), passo("4", 4), passo("5", 5)];
+
+    const resultado = mesclarPassos(doGet, jaAcumuladosViaSSE);
+
+    expect(resultado.map((p) => p.id).sort()).toEqual(["1", "2", "3", "4", "5"]);
+  });
+
+  it("GET mais atualizado que o estado local (SSE ainda não entregou tudo) inclui todos os novos", () => {
+    const doGet = [passo("1", 1), passo("2", 2), passo("3", 3)];
+    const atual = [passo("1", 1)];
+
+    const resultado = mesclarPassos(doGet, atual);
+
+    expect(resultado.map((p) => p.id).sort()).toEqual(["1", "2", "3"]);
+  });
+
+  it("nunca duplica um passo presente nos dois lados", () => {
+    const doGet = [passo("1", 1), passo("2", 2)];
+    const atual = [passo("1", 1), passo("2", 2)];
+
+    const resultado = mesclarPassos(doGet, atual);
+
+    expect(resultado).toHaveLength(2);
+  });
+
+  it("sem nenhum passo em nenhum dos dois lados, devolve lista vazia", () => {
+    expect(mesclarPassos([], [])).toEqual([]);
+  });
+
+  it("10 cliques rápidos: todos os 10 sobrevivem independente da ordem de chegada GET vs. SSE", () => {
+    const todos = Array.from({ length: 10 }, (_, i) => passo(String(i + 1), i + 1));
+    // Pior caso: GET só capturou a METADE (respondeu cedo, servidor ainda
+    // processando os outros 5 cliques concorrentes); SSE já entregou todos os 10.
+    const doGet = todos.slice(0, 5);
+    const viaSSE = todos;
+
+    const resultado = mesclarPassos(doGet, viaSSE);
+
+    expect(resultado).toHaveLength(10);
+    expect(resultado.map((p) => p.id).sort((a, b) => Number(a) - Number(b))).toEqual(
+      todos.map((p) => p.id),
+    );
+  });
+});
 
 function mockFetchJson(corpo: unknown, ok = true): void {
   vi.stubGlobal(

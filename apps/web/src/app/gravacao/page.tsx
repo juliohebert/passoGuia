@@ -7,7 +7,7 @@ import { Plug, Plus, Square, X } from "lucide-react";
 import { Botao } from "@/componentes/botao";
 import { Cartao } from "@/componentes/cartao";
 import { PassoGravado } from "@/componentes/passo-gravado";
-import { abrirFluxoDePassos, carregarPassos } from "@/dados/api-gravacao";
+import { abrirFluxoDePassos, carregarPassos, mesclarPassos } from "@/dados/api-gravacao";
 import { sessaoGravacao } from "@/dados/gravacao";
 import type { PassoGravado as Passo } from "@/dominio/tipos";
 
@@ -33,11 +33,15 @@ export default function PaginaGravacao() {
   const [descricao, setDescricao] = useState("");
 
   // Fonte real da sessão: carrega os passos existentes e assina os novos por SSE.
+  // O GET e o SSE correm em paralelo — o GET pode responder DEPOIS do SSE já
+  // ter entregue passos mais recentes (comum com cliques rápidos gerando
+  // vários passos seguidos); por isso o resultado do GET é MESCLADO ao
+  // estado atual, nunca o substitui (ver mesclarPassos).
   useEffect(() => {
     let ativo = true;
     void carregarPassos().then((passos) => {
       if (ativo) {
-        setAutomaticos(passos);
+        setAutomaticos((atual) => mesclarPassos(passos, atual));
         setCarregando(false);
       }
     });
@@ -61,7 +65,7 @@ export default function PaginaGravacao() {
   const passos = [...passosOrdenados, ...manuais];
   const totalPassos = automaticos.length + manuais.length;
 
-  // Resposta direta do PATCH de anotações (editor) — não depende do SSE
+  // Resposta direta do PATCH de máscaras (editor) — não depende do SSE
   // republicar para o card refletir a mudança na hora.
   function aoPassoAtualizado(atualizado: Passo) {
     setAutomaticos((atual) => atual.map((p) => (p.id === atualizado.id ? atualizado : p)));

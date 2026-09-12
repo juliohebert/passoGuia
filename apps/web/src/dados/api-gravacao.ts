@@ -190,6 +190,27 @@ function normalizarPasso(bruto: unknown): PassoGravado {
   };
 }
 
+/**
+ * Combina o snapshot do GET com os passos já acumulados no estado (ex.: já
+ * chegaram via SSE antes do GET terminar). NUNCA substitui o estado cru
+ * (`setAutomaticos(passos)`): o GET é assíncrono e pode responder DEPOIS que
+ * o SSE já entregou passos mais recentes — sobrescrever descartaria esses
+ * passos, mesmo já tendo sido gerados e enviados corretamente pela extensão
+ * (causa raiz de "nem todos os cliques rápidos aparecem" na tela /gravacao,
+ * um bug de renderização da web, não de captura). Preserva qualquer passo em
+ * `atuais` que não esteja no snapshot do GET; o GET é a fonte de verdade
+ * para os que aparecem nos dois.
+ */
+export function mesclarPassos(doGet: PassoGravado[], atuais: PassoGravado[]): PassoGravado[] {
+  const porId = new Map(doGet.map((p) => [p.id, p]));
+  for (const p of atuais) {
+    if (!porId.has(p.id)) {
+      porId.set(p.id, p);
+    }
+  }
+  return [...porId.values()];
+}
+
 /** Carrega os passos já registrados na sessão (GET). */
 export async function carregarPassos(): Promise<PassoGravado[]> {
   try {
