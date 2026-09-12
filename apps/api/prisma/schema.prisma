@@ -1,0 +1,61 @@
+// Modelo mínimo de persistência da sessão de gravação (ver apps/api/src/sessao-gravacao).
+// Sem auth/multi-tenant ainda — sessaoId é uma string livre combinada entre extensão e web.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model SessaoGravacao {
+  id           String   @id
+  criadaEm     DateTime @default(now())
+  /// Contador atômico para gerar `ordem` sem race condition (UPDATE ... SET proximoOrdem = proximoOrdem + 1 RETURNING).
+  proximoOrdem Int      @default(0)
+  passos       PassoGravado[]
+
+  @@map("sessoes_gravacao")
+}
+
+model PassoGravado {
+  id     String         @id @default(uuid())
+  sessao SessaoGravacao @relation(fields: [sessaoId], references: [id], onDelete: Cascade)
+
+  sessaoId     String
+  correlacaoId String
+  ordem        Int
+
+  tipoAcao String
+  titulo   String
+  descricao String
+  seletor   String?
+  urlOrigem String?
+
+  /// data URL do screenshot (~4.5MB no máx.) — sempre TEXT, nunca varchar limitado.
+  imagemRedigida String? @db.Text
+
+  redacaoIncompleta           Boolean
+  revisaoPrivacidadeNecessaria Boolean @default(false)
+
+  /// epoch (ms) de quando o passo ocorreu no cliente.
+  ocorridoEm   BigInt
+  /// epoch (ms) de quando a API registrou o passo.
+  registradoEm BigInt
+
+  origem String @default("automatico")
+
+  /// SugestaoMascara[] — nunca editado in-place, só substituído por inteiro.
+  sugestoesMascara  Json?
+  /// MascaraAplicada[] — legado do editor manual de privacidade.
+  mascarasAplicadas Json?
+  /// AnotacaoImagem[] — editor de imagem (máscara/destaque/seta/número).
+  anotacoesImagem   Json?
+
+  @@unique([sessaoId, correlacaoId])
+  @@unique([sessaoId, ordem])
+  @@index([sessaoId])
+  @@map("passos_gravados")
+}

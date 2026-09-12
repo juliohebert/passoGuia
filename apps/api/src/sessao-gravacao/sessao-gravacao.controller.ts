@@ -32,13 +32,13 @@ export class ControladorSessaoGravacao {
   constructor(private readonly servico: ServicoSessaoGravacao) {}
 
   @Post()
-  iniciar(@Body() corpo: unknown): ResumoSessao {
+  iniciar(@Body() corpo: unknown): Promise<ResumoSessao> {
     return this.servico.iniciarSessao(extrairSessaoId(corpo));
   }
 
   @Post(":sessaoId/passos")
   @HttpCode(201)
-  receberPasso(@Param("sessaoId") sessaoId: string, @Body() corpo: unknown): PassoGravado {
+  receberPasso(@Param("sessaoId") sessaoId: string, @Body() corpo: unknown): Promise<PassoGravado> {
     let recebido: PassoRecebido;
     try {
       recebido = validarPassoRecebido(corpo);
@@ -56,7 +56,7 @@ export class ControladorSessaoGravacao {
   }
 
   @Get(":sessaoId/passos")
-  listarPassos(@Param("sessaoId") sessaoId: string): PassoGravado[] {
+  listarPassos(@Param("sessaoId") sessaoId: string): Promise<PassoGravado[]> {
     return this.servico.listarPassos(sessaoId);
   }
 
@@ -66,11 +66,11 @@ export class ControladorSessaoGravacao {
    * original nem nas sugestões automáticas.
    */
   @Patch(":sessaoId/passos/:correlacaoId/mascaras")
-  atualizarMascaras(
+  async atualizarMascaras(
     @Param("sessaoId") sessaoId: string,
     @Param("correlacaoId") correlacaoId: string,
     @Body() corpo: unknown,
-  ): PassoGravado {
+  ): Promise<PassoGravado> {
     let mascaras: ReturnType<typeof validarMascarasAplicadas>;
     try {
       mascaras = validarMascarasAplicadas(corpo);
@@ -83,7 +83,7 @@ export class ControladorSessaoGravacao {
       }
       throw new BadRequestException(erro instanceof Error ? erro.message : "payload inválido");
     }
-    const atualizado = this.servico.atualizarMascaras(sessaoId, correlacaoId, mascaras);
+    const atualizado = await this.servico.atualizarMascaras(sessaoId, correlacaoId, mascaras);
     if (!atualizado) {
       throw new NotFoundException(`passo ${correlacaoId} não encontrado na sessão ${sessaoId}`);
     }
@@ -96,11 +96,11 @@ export class ControladorSessaoGravacao {
    * Nunca toca no screenshot original nem nas sugestões automáticas.
    */
   @Patch(":sessaoId/passos/:correlacaoId/anotacoes")
-  atualizarAnotacoes(
+  async atualizarAnotacoes(
     @Param("sessaoId") sessaoId: string,
     @Param("correlacaoId") correlacaoId: string,
     @Body() corpo: unknown,
-  ): PassoGravado {
+  ): Promise<PassoGravado> {
     let anotacoes: ReturnType<typeof validarAnotacoesImagem>;
     try {
       anotacoes = validarAnotacoesImagem(corpo);
@@ -113,7 +113,7 @@ export class ControladorSessaoGravacao {
       }
       throw new BadRequestException(erro instanceof Error ? erro.message : "payload inválido");
     }
-    const atualizado = this.servico.atualizarAnotacoes(sessaoId, correlacaoId, anotacoes);
+    const atualizado = await this.servico.atualizarAnotacoes(sessaoId, correlacaoId, anotacoes);
     if (!atualizado) {
       throw new NotFoundException(`passo ${correlacaoId} não encontrado na sessão ${sessaoId}`);
     }
