@@ -8,9 +8,11 @@
   },
   "scripts": {
     "dev": "turbo run dev",
+    "start": "node scripts/verificar-portas.mjs && turbo run dev --filter=@passoguia/web --filter=@passoguia/api --filter=@passoguia/extensao-gravador",
     "build": "turbo run build",
     "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck"
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test"
   },
   "devDependencies": {
     "turbo": "^2.3.4",

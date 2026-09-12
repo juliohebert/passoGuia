@@ -41,6 +41,7 @@ export function registrarFrameDoPasso(
   });
 }
 
+/** Nenhuma imagem foi enviada (infra: sem PRE-AÇÃO, sem frame, ou falha de canvas — nunca privacidade). */
 export function registrarPassoSemFrame(
   abaId: number,
   passo: PassoCandidato,
@@ -53,12 +54,17 @@ export function registrarPassoSemFrame(
   });
 }
 
-export function registrarPassoInseguro(
+/**
+ * Imagem FOI enviada, mas a detecção automática de regiões sensíveis não cobriu
+ * tudo com certeza (ex.: sub-frame stale descartado, iframe não mapeável, alvo
+ * em si sensível). Nunca descarta o screenshot — só sinaliza revisão humana.
+ */
+export function registrarPassoComRevisao(
   abaId: number,
   passo: PassoCandidato,
   motivos: readonly string[],
 ): void {
-  console.warn("[extensao-gravador][prova] captura DESCARTADA — redação incompleta", {
+  console.info("[extensao-gravador][prova] captura enviada — revisão de privacidade recomendada", {
     abaId,
     passo: resumoPasso(passo),
     motivos,

@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "build": "esbuild src/servico.ts --bundle --format=esm --outfile=dist/servico.js && esbuild src/conteudo.ts --bundle --format=iife --outfile=dist/conteudo.js && esbuild src/diagnostico.ts --bundle --format=iife --outfile=dist/diagnostico.js",
+    "dev": "node scripts/watch.mjs",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@passoguia/nucleo-gravador": "workspace:*"
@@ -17,6 +19,8 @@
     "@types/chrome": "^0.2.9",
     "esbuild": "^0.25.0",
     "eslint": "^9.18.0",
-    "typescript": "^5.7.3"
+    "happy-dom": "^20.14.3",
+    "typescript": "^5.7.3",
+    "vitest": "^5.0.0"
   }
 }

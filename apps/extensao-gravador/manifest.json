@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "PassoGuia — Gravador (prova funcional)",
   "version": "0.0.0",
-  "description": "Prova: o clique no ícone injeta a captura na aba ativa (activeTab + scripting) -> content script -> service worker -> PassoCandidato + screenshot PRE redigido. Sem <all_urls>, chrome.debugger, backend, storage, auth ou UI.",
+  "description": "Prova: o clique no ícone injeta a captura na aba ativa (activeTab + scripting) -> content script -> service worker -> PassoCandidato + screenshot PRE redigido -> API local do PassoGuia. Sem <all_urls>, chrome.debugger, storage, auth ou UI.",
   "background": {
     "service_worker": "dist/servico.js",
     "type": "module"
@@ -11,5 +11,5 @@
     "default_title": "PassoGuia — iniciar/encerrar captura na aba ativa"
   },
   "permissions": ["activeTab", "scripting"],
-  "host_permissions": []
+  "host_permissions": ["http://localhost/*"]
 }

@@ -7,6 +7,17 @@ export type {
 export type { TipoAcao, AcaoNormalizada, PassoCandidato } from "./tipos-acao";
 export type { DadosBrutosAlvo } from "./classificacao-alvo";
 export { SELETOR_ACIONAVEL, classificarAlvo } from "./classificacao-alvo";
+export type {
+  MetadadosCampo,
+  ConfiancaSensibilidade,
+  ClassificacaoSensibilidade,
+} from "./sensibilidade-campo";
+export {
+  pareceSensivel,
+  confiancaSensivel,
+  classificarSensibilidade,
+  pareceRotuloEstruturalSensivel,
+} from "./sensibilidade-campo";
 export type { Normalizador } from "./normalizador";
 export { criarNormalizador } from "./normalizador";
 export { avaliarPasso } from "./relevancia";

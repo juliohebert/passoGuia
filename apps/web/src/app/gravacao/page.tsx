@@ -1,13 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plug, Plus, Square, X } from "lucide-react";
 import { Botao } from "@/componentes/botao";
 import { Cartao } from "@/componentes/cartao";
 import { PassoGravado } from "@/componentes/passo-gravado";
-import { passosCapturados, sessaoGravacao } from "@/dados/gravacao";
+import { abrirFluxoDePassos, carregarPassos, mesclarPassos } from "@/dados/api-gravacao";
+import { sessaoGravacao } from "@/dados/gravacao";
 import type { PassoGravado as Passo } from "@/dominio/tipos";
 
 const classeCampo =
@@ -24,25 +25,65 @@ function Campo({ rotulo, children }: { rotulo: string; children: ReactNode }) {
 
 export default function PaginaGravacao() {
   const router = useRouter();
-  const [passos, setPassos] = useState<Passo[]>(passosCapturados);
+  const [automaticos, setAutomaticos] = useState<Passo[]>([]);
+  const [manuais, setManuais] = useState<Passo[]>([]);
+  const [carregando, setCarregando] = useState(true);
   const [formAberto, setFormAberto] = useState(false);
   const [titulo, setTitulo] = useState("");
   const [descricao, setDescricao] = useState("");
+
+  // Fonte real da sessão: carrega os passos existentes e assina os novos por SSE.
+  // O GET e o SSE correm em paralelo — o GET pode responder DEPOIS do SSE já
+  // ter entregue passos mais recentes (comum com cliques rápidos gerando
+  // vários passos seguidos); por isso o resultado do GET é MESCLADO ao
+  // estado atual, nunca o substitui (ver mesclarPassos).
+  useEffect(() => {
+    let ativo = true;
+    void carregarPassos().then((passos) => {
+      if (ativo) {
+        setAutomaticos((atual) => mesclarPassos(passos, atual));
+        setCarregando(false);
+      }
+    });
+    const fecharFluxo = abrirFluxoDePassos((passo) => {
+      // Upsert: um passo já existente pode chegar de novo com dados
+      // atualizados (ex.: máscaras salvas no editor republicam o passo no
+      // fluxo) — descartar nesse caso perderia a atualização.
+      setAutomaticos((atual) =>
+        atual.some((p) => p.id === passo.id)
+          ? atual.map((p) => (p.id === passo.id ? passo : p))
+          : [...atual, passo],
+      );
+    });
+    return () => {
+      ativo = false;
+      fecharFluxo();
+    };
+  }, []);
+
+  const passosOrdenados = [...automaticos].sort((a, b) => a.ordem - b.ordem);
+  const passos = [...passosOrdenados, ...manuais];
+  const totalPassos = automaticos.length + manuais.length;
+
+  // Resposta direta do PATCH de máscaras (editor) — não depende do SSE
+  // republicar para o card refletir a mudança na hora.
+  function aoPassoAtualizado(atualizado: Passo) {
+    setAutomaticos((atual) => atual.map((p) => (p.id === atualizado.id ? atualizado : p)));
+  }
 
   function adicionarEtapa() {
     const tituloLimpo = titulo.trim();
     if (tituloLimpo === "") {
       return;
     }
-    setPassos((atual) => [
+    setManuais((atual) => [
       ...atual,
       {
         id: `manual-${Date.now().toString()}-${atual.length.toString()}`,
-        ordem: atual.length + 1,
+        ordem: automaticos.length + atual.length + 1,
         titulo: tituloLimpo,
         descricao: descricao.trim() || undefined,
         origem: "manual",
-        temScreenshot: false,
       },
     ]);
     setTitulo("");
@@ -82,13 +123,15 @@ export default function PaginaGravacao() {
           </span>
           Gravando
         </span>
-        <span className="inline-flex items-center gap-2 text-sm text-slate-600">
-          <Plug className="h-4 w-4 text-emerald-500" />
-          Extensão conectada
+        {/* Sem heartbeat real da extensão ainda: estado neutro, nunca "conectada" por suposição. */}
+        <span className="inline-flex items-center gap-2 text-sm text-slate-500">
+          <Plug className="h-4 w-4 text-slate-400" />
+          Extensão — sem heartbeat
         </span>
         <span className="text-sm text-slate-500">
-          <span className="font-semibold text-slate-900">{passos.length}</span>{" "}
-          {passos.length === 1 ? "passo capturado" : "passos capturados"}
+          <span className="font-semibold text-slate-900">{totalPassos}</span>{" "}
+          {totalPassos === 1 ? "passo capturado" : "passos capturados"}
+          {carregando ? " · carregando…" : ""}
         </span>
       </Cartao>
 
@@ -157,11 +200,17 @@ export default function PaginaGravacao() {
           </Cartao>
         ) : null}
 
-        <div className="space-y-3">
-          {passos.map((passo) => (
-            <PassoGravado key={passo.id} passo={passo} />
-          ))}
-        </div>
+        {!carregando && passos.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+            Nenhum passo ainda. Use a extensão no sistema alvo ou adicione uma etapa manual.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {passos.map((passo) => (
+              <PassoGravado key={passo.id} passo={passo} onPassoAtualizado={aoPassoAtualizado} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
