@@ -3,12 +3,12 @@ import { TIPO_LISTAR, type RegistroProva, type RespostaListar } from "./tipos-di
 const listaEl = document.querySelector<HTMLElement>("#registros");
 const statusEl = document.querySelector<HTMLElement>("#status");
 
-function renderInseguro(bloco: HTMLElement, registro: RegistroProva): void {
+function renderSemImagem(bloco: HTMLElement, registro: RegistroProva): void {
   bloco.classList.add("inseguro");
   const aviso = document.createElement("p");
   aviso.className = "aviso";
   aviso.textContent =
-    "⚠ Captura descartada — redação não garantida. Nenhum screenshot é exibido nem fica elegível para persistência futura.";
+    "Sem screenshot para este passo (infraestrutura: sem PRE-AÇÃO/frame/canvas). A ação foi registrada normalmente.";
   const motivos = document.createElement("ul");
   motivos.className = "motivos";
   for (const m of registro.motivos.length ? registro.motivos : ["motivo não informado"]) {
@@ -19,14 +19,49 @@ function renderInseguro(bloco: HTMLElement, registro: RegistroProva): void {
   bloco.append(aviso, motivos);
 }
 
-function renderSeguro(bloco: HTMLElement, registro: RegistroProva): void {
+function renderComImagem(bloco: HTMLElement, registro: RegistroProva): void {
   if (!registro.pre) {
     return;
   }
+  const origem = registro.origemCaptura ?? "pre";
   const img = document.createElement("img");
   img.src = registro.pre.dataUrl;
-  img.alt = "screenshot PRE-ACAO (campos redigidos + destaque)";
-  bloco.append(img);
+  img.alt = `screenshot ${origem.toUpperCase()} (intacto — sem máscara automática)`;
+  const tagOrigem = document.createElement("p");
+  tagOrigem.className = "meta";
+  tagOrigem.textContent =
+    origem === "pos"
+      ? "POST — capturado após estabilização (UI transitória revelada pelo clique)"
+      : "PRE — capturado antes da ação";
+  bloco.append(tagOrigem, img);
+
+  const sugestoes = registro.sugestoesMascara ?? [];
+  if (sugestoes.length > 0) {
+    const aviso = document.createElement("p");
+    aviso.className = "aviso-revisao";
+    aviso.textContent = `🔎 ${String(sugestoes.length)} sugestão(ões) de máscara — nada foi borrado automaticamente, revise antes de compartilhar.`;
+    bloco.append(aviso);
+    const lista = document.createElement("ul");
+    lista.className = "motivos";
+    for (const s of sugestoes) {
+      const li = document.createElement("li");
+      li.textContent = `[${s.confianca}] ${s.motivo} — x=${String(s.x)} y=${String(s.y)} l=${String(s.largura)} a=${String(s.altura)}`;
+      lista.append(li);
+    }
+    bloco.append(lista);
+  } else if (registro.revisaoPrivacidadeNecessaria && registro.motivos.length > 0) {
+    const aviso = document.createElement("p");
+    aviso.className = "aviso-revisao";
+    aviso.textContent = "⚠ Revisar — consolidação incerta (nenhuma sugestão de máscara, mas há motivo abaixo).";
+    const motivos = document.createElement("ul");
+    motivos.className = "motivos";
+    for (const m of registro.motivos) {
+      const li = document.createElement("li");
+      li.textContent = m;
+      motivos.append(li);
+    }
+    bloco.append(aviso, motivos);
+  }
 
   const caixa = registro.caixa;
   const escala = registro.escala;
@@ -67,9 +102,9 @@ function render(registros: RegistroProva[]): void {
     bloco.append(acao, id);
 
     if (registro.redacaoIncompleta || !registro.pre) {
-      renderInseguro(bloco, registro);
+      renderSemImagem(bloco, registro);
     } else {
-      renderSeguro(bloco, registro);
+      renderComImagem(bloco, registro);
     }
 
     listaEl.append(bloco);
@@ -87,8 +122,12 @@ async function atualizar(): Promise<void> {
     registros = [];
   }
   if (statusEl) {
-    const inseguros = registros.filter((r) => r.redacaoIncompleta).length;
-    statusEl.textContent = `atualizado ${new Date().toLocaleTimeString("pt-BR")} — ${registros.length} passo(s), ${inseguros} descartado(s)`;
+    const semImagem = registros.filter((r) => r.redacaoIncompleta).length;
+    const totalSugestoes = registros.reduce(
+      (soma, r) => soma + (r.sugestoesMascara?.length ?? 0),
+      0,
+    );
+    statusEl.textContent = `atualizado ${new Date().toLocaleTimeString("pt-BR")} — ${registros.length} passo(s), ${semImagem} sem screenshot, ${totalSugestoes} sugestão(ões) de máscara no total`;
   }
   render(registros);
 }

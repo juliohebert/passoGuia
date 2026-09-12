@@ -60,10 +60,14 @@ export function criarNormalizador(): Normalizador {
     if (!pendente || pendente.familia !== familia) {
       return false;
     }
-    if (familia === "preenchimento" || familia === "rolagem") {
-      return pendente.base.alvo?.seletor === evento.alvo?.seletor;
-    }
-    return true;
+    // "clique" TAMBÉM precisa checar o alvo (igual preenchimento/rolagem): sem isso,
+    // um "apontar" (pointerdown) órfão — cujo "clicar" nunca chegou (ex.: mousedown
+    // seguido de arrastar/soltar fora, comum em drag ou seleção de texto) — fica
+    // pendente e é silenciosamente MESCLADO ao próximo clique real de OUTRO
+    // elemento: a ação final herdava o alvo/instante do pointerdown errado, o que
+    // por sua vez fazia o service worker não achar a captura PRE correta (o
+    // instante não batia com nenhuma gravada) — passo sem screenshot.
+    return pendente.base.alvo?.seletor === evento.alvo?.seletor;
   }
 
   return {

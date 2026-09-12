@@ -10,12 +10,14 @@
   },
   "scripts": {
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@passoguia/configuracao-eslint": "workspace:*",
     "@passoguia/configuracao-typescript": "workspace:*",
     "eslint": "^9.18.0",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^5.0.0"
   }
 }

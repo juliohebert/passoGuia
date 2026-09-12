@@ -21,6 +21,8 @@ export interface DescricaoAlvo {
   seletor?: string;
   texto?: string;
   rotuloAcessivel?: string;
+  /** Contexto local curto de onde o alvo está na tela (ex.: "No menu", "Na janela aberta"). */
+  contextoLocal?: string;
   acionavel?: boolean;
   campoEditavel?: boolean;
   sensivel?: boolean;

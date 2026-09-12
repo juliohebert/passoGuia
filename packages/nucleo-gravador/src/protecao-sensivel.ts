@@ -39,6 +39,9 @@ function sanearAlvo(alvo: DescricaoAlvo): DescricaoAlvo {
   if (alvo.rotuloAcessivel) {
     seguro.rotuloAcessivel = alvo.rotuloAcessivel;
   }
+  if (alvo.contextoLocal) {
+    seguro.contextoLocal = alvo.contextoLocal;
+  }
   // Texto de campo (mesmo não-senha) pode conter valor via textContent -> descartar.
   if (alvo.texto && alvo.campoEditavel !== true && alvo.sensivel !== true) {
     seguro.texto = alvo.texto;
