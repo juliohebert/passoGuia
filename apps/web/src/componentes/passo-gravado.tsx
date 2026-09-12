@@ -6,6 +6,7 @@ import { CapturaAnotada } from "@/componentes/captura-anotada";
 import { Cartao } from "@/componentes/cartao";
 import { EditorAnotacoes } from "@/componentes/editor-anotacoes";
 import { EtiquetaOrigem } from "@/componentes/etiqueta-origem";
+import { PreviewCaptura } from "@/componentes/preview-captura";
 import { salvarAnotacoes } from "@/dados/api-gravacao";
 import { anotacoesParaRenderizar } from "@/dominio/anotacao";
 import type { AnotacaoImagem, PassoGravado as Passo } from "@/dominio/tipos";
@@ -19,7 +20,15 @@ import type { AnotacaoImagem, PassoGravado as Passo } from "@/dominio/tipos";
  * é alterado, só a renderização. QUALQUER passo com screenshot permite
  * "Editar imagem", mesmo sem nenhuma sugestão.
  */
-function AreaScreenshot({ passo, onEditar }: { passo: Passo; onEditar: () => void }) {
+function AreaScreenshot({
+  passo,
+  onEditar,
+  onAmpliar,
+}: {
+  passo: Passo;
+  onEditar: () => void;
+  onAmpliar: () => void;
+}) {
   if (passo.imagemRedigida) {
     const anotacoes = anotacoesParaRenderizar(passo);
     const temEdicaoSalva = passo.anotacoesImagem !== undefined || passo.mascarasAplicadas !== undefined;
@@ -28,12 +37,19 @@ function AreaScreenshot({ passo, onEditar }: { passo: Passo; onEditar: () => voi
 
     return (
       <div className="relative">
-        <CapturaAnotada
-          src={passo.imagemRedigida}
-          alt={alt}
-          anotacoes={anotacoes}
-          className="w-full rounded-lg border border-slate-200"
-        />
+        <button
+          type="button"
+          onClick={onAmpliar}
+          aria-label={`Ampliar ${alt}`}
+          className="block w-full cursor-zoom-in"
+        >
+          <CapturaAnotada
+            src={passo.imagemRedigida}
+            alt={alt}
+            anotacoes={anotacoes}
+            className="w-full rounded-lg border border-slate-200"
+          />
+        </button>
         {anotacoes.length > 0 ? (
           <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-amber-100/95 px-2 py-1 text-[11px] font-medium text-amber-800 shadow-sm">
             <ShieldAlert className="h-3 w-3" />
@@ -77,6 +93,7 @@ interface PassoGravadoProps {
 
 export function PassoGravado({ passo, onPassoAtualizado }: PassoGravadoProps) {
   const [editorAberto, setEditorAberto] = useState(false);
+  const [previewAberto, setPreviewAberto] = useState(false);
 
   async function aoSalvarAnotacoes(anotacoes: AnotacaoImagem[]): Promise<boolean> {
     if (!passo.correlacaoId) {
@@ -110,6 +127,9 @@ export function PassoGravado({ passo, onPassoAtualizado }: PassoGravadoProps) {
             onEditar={() => {
               setEditorAberto(true);
             }}
+            onAmpliar={() => {
+              setPreviewAberto(true);
+            }}
           />
         </div>
       </div>
@@ -120,6 +140,17 @@ export function PassoGravado({ passo, onPassoAtualizado }: PassoGravadoProps) {
             setEditorAberto(false);
           }}
           onSalvar={aoSalvarAnotacoes}
+        />
+      ) : null}
+      {passo.imagemRedigida ? (
+        <PreviewCaptura
+          aberto={previewAberto}
+          onFechar={() => {
+            setPreviewAberto(false);
+          }}
+          src={passo.imagemRedigida}
+          alt={`captura do passo ${String(passo.ordem)}`}
+          anotacoes={anotacoesParaRenderizar(passo)}
         />
       ) : null}
     </Cartao>
