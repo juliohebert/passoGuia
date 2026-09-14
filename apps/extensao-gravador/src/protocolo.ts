@@ -59,9 +59,7 @@ export interface RelatorioFrame {
 
 /** content script -> service worker. */
 export type MensagemCS =
-  // DIAGNOSTICO TEMP: `diagId` só serve para correlacionar logs desta investigação
-  // (clique -> gatilho -> API). Remover junto com o restante do diagnóstico.
-  | { tipo: "evento"; evento: EventoCapturado; diagId?: string }
+  | { tipo: "evento"; evento: EventoCapturado }
   | {
       tipo: "gatilho";
       evento: EventoCapturado;
@@ -73,11 +71,33 @@ export type MensagemCS =
        * ao service worker que também deve capturar um screenshot POST.
        */
       abreUiTransitoria: boolean;
-      diagId?: string;
     }
-  | { tipo: "relatorio"; relatorio: RelatorioFrame };
+  | { tipo: "relatorio"; relatorio: RelatorioFrame }
+  | { tipo: "mudanca-pos-acao"; instanteApontar: number };
 
 /** service worker -> content script. */
 export interface PedirRelatorio {
   tipo: "pedir-relatorio";
+}
+
+// --- web (PassoGuia) -> extensão, via chrome.runtime.onMessageExternal ---
+// Canal totalmente separado do content script <-> service worker acima:
+// mensagens externas vêm de uma página web comum (ver "externally_connectable"
+// em manifest.json, restrito à origem local da web), nunca de dentro da
+// extensão — usado para a web entregar o `sessaoId` DIRETAMENTE à extensão
+// ao abrir /gravacao (ver ponte-web.ts), sem passar por nenhum vínculo
+// clienteId<->sessaoId na API: a extensão persiste o valor recebido em
+// chrome.storage.session e passa a usá-lo para todo POST/PATCH de sessão.
+
+export const TIPO_DEFINIR_SESSAO_ATIVA = "definir-sessao-ativa";
+
+/** web -> extensão: entrega o sessaoId da gravação aberta em /gravacao. */
+export interface PedidoDefinirSessaoAtiva {
+  tipo: typeof TIPO_DEFINIR_SESSAO_ATIVA;
+  sessaoId: string;
+}
+
+/** extensão -> web: confirma que o sessaoId foi recebido e persistido. */
+export interface RespostaDefinirSessaoAtiva {
+  ok: boolean;
 }

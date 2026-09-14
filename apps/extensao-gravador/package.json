@@ -4,14 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/servico.ts --bundle --format=esm --outfile=dist/servico.js && esbuild src/conteudo.ts --bundle --format=iife --outfile=dist/conteudo.js && esbuild src/diagnostico.ts --bundle --format=iife --outfile=dist/diagnostico.js",
+    "build": "esbuild src/servico.ts --bundle --format=esm --outfile=dist/servico.js && esbuild src/conteudo.ts --bundle --format=iife --outfile=dist/conteudo.js && esbuild src/offscreen.ts --bundle --format=iife --outfile=dist/offscreen.js && cp offscreen.html dist/offscreen.html",
     "dev": "node scripts/watch.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
-    "@passoguia/nucleo-gravador": "workspace:*"
+    "@passoguia/nucleo-gravador": "workspace:*",
+    "psl": "^1.15.0"
   },
   "devDependencies": {
     "@passoguia/configuracao-eslint": "workspace:*",

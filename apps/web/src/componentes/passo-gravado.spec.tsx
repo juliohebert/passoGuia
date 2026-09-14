@@ -17,7 +17,7 @@ function passoBase(overrides: Partial<Passo> = {}): Passo {
 describe("PassoGravado — preview ampliado do screenshot", () => {
   it("passo COM screenshot: clicar na captura abre o preview ampliado", () => {
     const passo = passoBase({ imagemRedigida: "data:image/png;base64,AAAA", correlacaoId: "c1" });
-    render(<PassoGravado passo={passo} />);
+    render(<PassoGravado sessaoId="s1" passo={passo} />);
 
     expect(screen.queryByAltText("Ampliar captura do passo 1", { exact: false })).toBeNull();
 
@@ -30,7 +30,7 @@ describe("PassoGravado — preview ampliado do screenshot", () => {
 
   it("passo SEM screenshot (etapa manual): não existe nenhum gatilho de preview", () => {
     const passo = passoBase({ origem: "manual", imagemRedigida: undefined });
-    render(<PassoGravado passo={passo} />);
+    render(<PassoGravado sessaoId="s1" passo={passo} />);
 
     expect(screen.queryByRole("button", { name: /Ampliar/i })).toBeNull();
     expect(screen.queryByAltText("captura do passo 1")).toBeNull();
@@ -38,7 +38,7 @@ describe("PassoGravado — preview ampliado do screenshot", () => {
 
   it("passo SEM screenshot (automático, sem imagem por infraestrutura): não existe nenhum gatilho de preview", () => {
     const passo = passoBase({ imagemRedigida: undefined, redacaoIncompleta: true });
-    render(<PassoGravado passo={passo} />);
+    render(<PassoGravado sessaoId="s1" passo={passo} />);
 
     expect(screen.queryByRole("button", { name: /Ampliar/i })).toBeNull();
   });
@@ -51,7 +51,7 @@ describe("PassoGravado — preview ampliado do screenshot", () => {
         { x: 1, y: 1, largura: 10, altura: 10, motivo: "campo com tipo HTML sensível", confianca: "alta" },
       ],
     });
-    const { container } = render(<PassoGravado passo={passo} />);
+    const { container } = render(<PassoGravado sessaoId="s1" passo={passo} />);
 
     // badge de contagem no card
     expect(screen.getByText(/1 anotação sugerida/)).toBeInTheDocument();
@@ -80,7 +80,7 @@ describe("PassoGravado — preview ampliado do screenshot", () => {
         { id: "m1", x: 1, y: 1, largura: 10, altura: 10, origem: "manual", ativa: true },
       ],
     });
-    render(<PassoGravado passo={passo} />);
+    render(<PassoGravado sessaoId="s1" passo={passo} />);
 
     expect(screen.getByText(/1 anotação$/)).toBeInTheDocument(); // sem "sugerida" no texto
 
@@ -90,7 +90,7 @@ describe("PassoGravado — preview ampliado do screenshot", () => {
 
   it("fecha o preview pelo X e reabre normalmente", () => {
     const passo = passoBase({ imagemRedigida: "data:image/png;base64,AAAA", correlacaoId: "c1" });
-    render(<PassoGravado passo={passo} />);
+    render(<PassoGravado sessaoId="s1" passo={passo} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Ampliar captura do passo 1" }));
     expect(screen.getAllByAltText("captura do passo 1")).toHaveLength(2);
@@ -104,7 +104,7 @@ describe("PassoGravado — preview ampliado do screenshot", () => {
 
   it("fecha o preview por ESC", () => {
     const passo = passoBase({ imagemRedigida: "data:image/png;base64,AAAA", correlacaoId: "c1" });
-    render(<PassoGravado passo={passo} />);
+    render(<PassoGravado sessaoId="s1" passo={passo} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Ampliar captura do passo 1" }));
     expect(screen.getAllByAltText("captura do passo 1")).toHaveLength(2);
@@ -115,7 +115,7 @@ describe("PassoGravado — preview ampliado do screenshot", () => {
 
   it("clicar em 'Editar imagem' não abre o preview (ações independentes)", () => {
     const passo = passoBase({ imagemRedigida: "data:image/png;base64,AAAA", correlacaoId: "c1" });
-    render(<PassoGravado passo={passo} onPassoAtualizado={vi.fn()} />);
+    render(<PassoGravado sessaoId="s1" passo={passo} onPassoAtualizado={vi.fn()} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Editar imagem" }));
 
@@ -126,7 +126,7 @@ describe("PassoGravado — preview ampliado do screenshot", () => {
 
   it("passo com screenshot mas SEM nenhuma sugestão ainda permite 'Editar imagem' (nova regra)", () => {
     const passo = passoBase({ imagemRedigida: "data:image/png;base64,AAAA", correlacaoId: "c1" });
-    render(<PassoGravado passo={passo} onPassoAtualizado={vi.fn()} />);
+    render(<PassoGravado sessaoId="s1" passo={passo} onPassoAtualizado={vi.fn()} />);
 
     expect(screen.getByRole("button", { name: "Editar imagem" })).toBeInTheDocument();
   });

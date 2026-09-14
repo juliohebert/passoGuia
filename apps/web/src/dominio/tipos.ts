@@ -1,4 +1,5 @@
 export type StatusManual = "rascunho" | "em_captura" | "em_revisao" | "publicado";
+export type EstadoManual = "RASCUNHO" | "EM_REVISAO" | "CONFIRMADO";
 
 export type ModoCaptura = "extensao" | "embed";
 
@@ -132,9 +133,17 @@ export interface PassoGravado {
   anotacoesImagem?: AnotacaoImagem[];
   /** Identificador estável para a API (PATCH de máscaras/anotações) — mesmo valor do backend; ausente só em etapas manuais (sem correlacaoId do backend). */
   correlacaoId?: string;
+  incluidoNoGuia?: boolean;
 }
 
-export interface SessaoGravacao {
-  manual: string;
-  sistema: string;
+/** Resumo de uma sessão de gravação real, devolvido pela API (POST/GET /sessoes). */
+export interface ResumoSessao {
+  sessaoId: string;
+  nome: string;
+  url?: string;
+  modo: ModoCaptura;
+  criadaEm: number;
+  totalPassos: number;
+  descricao?: string;
+  estado?: EstadoManual;
 }

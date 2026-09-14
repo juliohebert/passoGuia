@@ -1,7 +1,7 @@
 /**
  * Prepara a captura PARA ENVIO: nunca desenha nada sobre o screenshot — nem
  * blur, nem tarja, nem overlay. O screenshot vai INTACTO (mesma dataUrl que
- * chegou de captura-tela.ts). Só calcula geometria:
+ * chegou da captura persistente da aba). Só calcula geometria:
  *  - `sugestoesMascara`: as regiões sensíveis detectadas, convertidas para
  *    px de imagem — METADADOS para o usuário confirmar/editar depois, nunca
  *    pixels desenhados;
@@ -11,7 +11,7 @@
  *   escalaX = larguraImagem / larguraViewportCss
  *   escalaY = alturaImagem  / alturaViewportCss
  */
-import type { Frame } from "./captura-tela";
+import type { Frame } from "./captura-stream";
 import type { Retangulo, SugestaoRegiao, ViewportCss } from "./protocolo";
 import { paraImagem, sugestoesParaImagem, type SugestaoMascara } from "./redacao-visual";
 
@@ -62,7 +62,7 @@ export async function prepararCaptura(
     const caixaImagem = alvoRect ? paraImagem(alvoRect, escalaX, escalaY) : undefined;
 
     return {
-      dataUrl: frame.dataUrl, // NUNCA reprocessado — idêntico ao que captura-tela.ts capturou
+      dataUrl: frame.dataUrl, // NUNCA reprocessado — idêntico ao frame da stream
       bytes: frame.bytes,
       escalaX,
       escalaY,

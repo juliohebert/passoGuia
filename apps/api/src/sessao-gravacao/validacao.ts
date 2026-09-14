@@ -6,14 +6,23 @@
 import { randomUUID } from "node:crypto";
 import {
   CONFIANCAS_SUGESTAO,
+  MODOS_CAPTURA,
   ORIGENS_MASCARA,
   TIPOS_ACAO,
   TIPOS_ANOTACAO,
   type AnotacaoImagem,
+  type AtualizacaoImagemPasso,
+  type AtualizacaoManual,
+  type AtualizacaoRevisaoPasso,
+  ESTADOS_MANUAL,
+  type AtualizacaoPasso,
   type ConfiancaSugestao,
+  type CriacaoSessao,
   type GeometriaAnotacao,
   type MascaraAplicada,
+  type ModoCaptura,
   type OrigemMascara,
+  type PassoManualRecebido,
   type PassoRecebido,
   type SugestaoMascara,
   type TipoAcao,
@@ -29,6 +38,7 @@ const MAX_SUGESTOES = 200; // teto generoso, mas finito — nunca aceitar um arr
 const MAX_ID_MASCARA = 120; // mesmo teto de correlacaoId — id local/serializável, nunca texto livre
 const MAX_MASCARAS = 100; // máscaras são desenhadas à mão — teto bem menor que sugestões automáticas
 const MAX_ANOTACOES = 150; // 4 tipos por passo — um pouco mais generoso que MAX_MASCARAS
+const MAX_PASSOS_REORDENACAO = 1000; // teto generoso para o tamanho de um manual
 
 function textoObrigatorio(valor: unknown, campo: string, max: number): string {
   if (typeof valor !== "string" || valor.trim() === "") {
@@ -60,6 +70,10 @@ function textoOpcional(valor: unknown, campo: string, max: number): string | und
 
 function ehTipoAcao(valor: unknown): valor is TipoAcao {
   return typeof valor === "string" && (TIPOS_ACAO as readonly string[]).includes(valor);
+}
+
+function ehModoCaptura(valor: unknown): valor is ModoCaptura {
+  return typeof valor === "string" && (MODOS_CAPTURA as readonly string[]).includes(valor);
 }
 
 function ehConfiancaSugestao(valor: unknown): valor is ConfiancaSugestao {
@@ -282,12 +296,18 @@ export function validarPassoRecebido(entrada: unknown): PassoRecebido {
   }
   const revisaoPrivacidadeNecessaria = bruto.revisaoPrivacidadeNecessaria === true;
 
+  // Precisa ser um INTEIRO: a coluna é BigInt (ver schema.prisma) e
+  // `BigInt(valor)` lança RangeError não capturado para qualquer fração
+  // (ex.: `performance.timeOrigin + evento.timeStamp`, ambos DOMHighResTimeStamp
+  // fracionários, na extensão) — sem este check, isso derruba a request com
+  // 500 em vez de um 400 claro (causa raiz do 500 no POST de passos).
   if (
     typeof bruto.ocorridoEm !== "number" ||
     !Number.isFinite(bruto.ocorridoEm) ||
+    !Number.isInteger(bruto.ocorridoEm) ||
     bruto.ocorridoEm <= 0
   ) {
-    throw new Error("ocorridoEm deve ser um epoch (ms) válido");
+    throw new Error("ocorridoEm deve ser um epoch (ms) inteiro válido");
   }
   const ocorridoEm = bruto.ocorridoEm;
 
@@ -323,4 +343,167 @@ export function validarPassoRecebido(entrada: unknown): PassoRecebido {
     ...(sugestoesMascara ? { sugestoesMascara } : {}),
     ocorridoEm,
   };
+}
+
+/** Payload do PATCH .../imagem: substitui a imagem do passo já existente. */
+export function validarAtualizacaoImagem(entrada: unknown): AtualizacaoImagemPasso {
+  if (typeof entrada !== "object" || entrada === null) {
+    throw new Error("payload deve ser um objeto");
+  }
+  const bruto = entrada as Record<string, unknown>;
+  if (typeof bruto.imagemRedigida !== "string" || !bruto.imagemRedigida.startsWith("data:image/")) {
+    throw new Error("imagemRedigida deve ser uma data URL de imagem");
+  }
+  if (bruto.imagemRedigida.length > MAX_IMAGEM) {
+    throw new Error("imagemRedigida excede o tamanho máximo permitido");
+  }
+  if (bruto.redacaoIncompleta !== false) {
+    throw new Error("redacaoIncompleta deve ser false para atualização com imagem");
+  }
+  if (typeof bruto.revisaoPrivacidadeNecessaria !== "boolean") {
+    throw new Error("revisaoPrivacidadeNecessaria deve ser booleano");
+  }
+  if (
+    typeof bruto.ocorridoEm !== "number" ||
+    !Number.isFinite(bruto.ocorridoEm) ||
+    !Number.isInteger(bruto.ocorridoEm) ||
+    bruto.ocorridoEm <= 0
+  ) {
+    throw new Error("ocorridoEm deve ser um epoch (ms) inteiro válido");
+  }
+  const sugestoesMascara = validarSugestoesMascara(bruto.sugestoesMascara);
+  return {
+    imagemRedigida: bruto.imagemRedigida,
+    redacaoIncompleta: false,
+    revisaoPrivacidadeNecessaria: bruto.revisaoPrivacidadeNecessaria,
+    ...(sugestoesMascara ? { sugestoesMascara } : {}),
+    ocorridoEm: bruto.ocorridoEm,
+  };
+}
+
+const MAX_NOME_SESSAO = 200;
+const MAX_URL_SESSAO = 500;
+const MAX_SESSAO_ID = 120;
+
+/**
+ * Payload do POST /sessoes: cria uma sessão real (fluxo "Novo manual").
+ * `sessaoId` é opcional — a API gera um se ausente. `nome` é obrigatório
+ * (vem do formulário "Novo manual"); `modo` ausente vira "extensao".
+ */
+export function validarCriacaoSessao(entrada: unknown): CriacaoSessao {
+  if (typeof entrada !== "object" || entrada === null) {
+    throw new Error("payload deve ser um objeto");
+  }
+  const bruto = entrada as Record<string, unknown>;
+  const nome = textoObrigatorio(bruto.nome, "nome", MAX_NOME_SESSAO);
+  const descricao = textoOpcional(bruto.descricao, "descricao", MAX_DESCRICAO);
+  const url = textoOpcional(bruto.url, "url", MAX_URL_SESSAO);
+  const sessaoId = textoOpcional(bruto.sessaoId, "sessaoId", MAX_SESSAO_ID);
+  if (bruto.modo !== undefined && !ehModoCaptura(bruto.modo)) {
+    throw new Error(`modo inválido: ${JSON.stringify(bruto.modo)}`);
+  }
+  const modo = bruto.modo as ModoCaptura | undefined;
+  return {
+    nome,
+    ...(descricao ? { descricao } : {}),
+    ...(url ? { url } : {}),
+    ...(sessaoId ? { sessaoId } : {}),
+    ...(modo ? { modo } : {}),
+  };
+}
+
+export function validarAtualizacaoManual(entrada: unknown): AtualizacaoManual {
+  if (typeof entrada !== "object" || entrada === null) {
+    throw new Error("payload deve ser um objeto");
+  }
+  const bruto = entrada as Record<string, unknown>;
+  const nome = textoObrigatorio(bruto.nome, "nome", MAX_NOME_SESSAO);
+  const descricao = textoOpcional(bruto.descricao, "descricao", MAX_DESCRICAO);
+  return { nome, ...(descricao ? { descricao } : {}) };
+}
+
+export function validarAtualizacaoRevisaoPasso(entrada: unknown): AtualizacaoRevisaoPasso {
+  if (typeof entrada !== "object" || entrada === null) {
+    throw new Error("payload deve ser um objeto");
+  }
+  const bruto = entrada as Record<string, unknown>;
+  if (typeof bruto.incluidoNoGuia !== "boolean") {
+    throw new Error("incluidoNoGuia deve ser booleano");
+  }
+  if (bruto.removerImagem !== undefined && typeof bruto.removerImagem !== "boolean") {
+    throw new Error("removerImagem deve ser booleano");
+  }
+  return { incluidoNoGuia: bruto.incluidoNoGuia, removerImagem: bruto.removerImagem === true };
+}
+
+export function validarEstadoManual(entrada: unknown): (typeof ESTADOS_MANUAL)[number] {
+  if (typeof entrada !== "object" || entrada === null) {
+    throw new Error("payload deve ser um objeto");
+  }
+  const estado = (entrada as Record<string, unknown>).estado;
+  if (!ESTADOS_MANUAL.includes(estado as (typeof ESTADOS_MANUAL)[number])) {
+    throw new Error("estado manual inválido");
+  }
+  return estado as (typeof ESTADOS_MANUAL)[number];
+}
+
+/**
+ * Payload do PATCH /sessoes/:sessaoId: atualiza a `url` (origem) da sessão
+ * com o que a extensão detectou de verdade ao ativar a captura — nunca
+ * informado pelo usuário. `url` obrigatório (é o único campo atualizável
+ * por aqui).
+ */
+export function validarAtualizacaoOrigemSessao(entrada: unknown): { url: string } {
+  if (typeof entrada !== "object" || entrada === null) {
+    throw new Error("payload deve ser um objeto");
+  }
+  const bruto = entrada as Record<string, unknown>;
+  const url = textoObrigatorio(bruto.url, "url", MAX_URL_SESSAO);
+  return { url };
+}
+
+// --- Editor do Manual ----------------------------------------------------
+
+/** Payload do POST .../passos/manual: título obrigatório, descrição opcional, nunca screenshot. */
+export function validarPassoManualRecebido(entrada: unknown): PassoManualRecebido {
+  if (typeof entrada !== "object" || entrada === null) {
+    throw new Error("payload deve ser um objeto");
+  }
+  const bruto = entrada as Record<string, unknown>;
+  const titulo = textoObrigatorio(bruto.titulo, "titulo", MAX_TITULO);
+  const descricao = textoOpcional(bruto.descricao, "descricao", MAX_DESCRICAO);
+  return { titulo, ...(descricao ? { descricao } : {}) };
+}
+
+/** Payload do PATCH .../passos/:correlacaoId: título obrigatório, descrição opcional (ausente/vazia limpa). */
+export function validarAtualizacaoPasso(entrada: unknown): AtualizacaoPasso {
+  if (typeof entrada !== "object" || entrada === null) {
+    throw new Error("payload deve ser um objeto");
+  }
+  const bruto = entrada as Record<string, unknown>;
+  const titulo = textoObrigatorio(bruto.titulo, "titulo", MAX_TITULO);
+  const descricao = textoOpcional(bruto.descricao, "descricao", MAX_DESCRICAO);
+  return { titulo, ...(descricao ? { descricao } : {}) };
+}
+
+/** Payload do PATCH .../passos/reordenar: lista de correlacaoId na nova ordem final. */
+export function validarReordenacaoPassos(entrada: unknown): string[] {
+  if (typeof entrada !== "object" || entrada === null) {
+    throw new Error("payload deve ser um objeto");
+  }
+  const bruto = entrada as Record<string, unknown>;
+  if (!Array.isArray(bruto.ordem)) {
+    throw new Error("ordem deve ser uma lista de correlacaoId");
+  }
+  if (bruto.ordem.length === 0) {
+    throw new Error("ordem não pode ser uma lista vazia");
+  }
+  if (bruto.ordem.length > MAX_PASSOS_REORDENACAO) {
+    throw new Error(`ordem excede o máximo de ${String(MAX_PASSOS_REORDENACAO)} itens`);
+  }
+  const ids = bruto.ordem.map((item, indice) => textoObrigatorio(item, `ordem[${String(indice)}]`, 120));
+  if (new Set(ids).size !== ids.length) {
+    throw new Error("ordem contém correlacaoId duplicado");
+  }
+  return ids;
 }

@@ -11,8 +11,17 @@ datasource db {
 }
 
 model SessaoGravacao {
-  id           String   @id
-  criadaEm     DateTime @default(now())
+  id       String @id
+  /// Nome do manual (dado pelo usuário em "Novo manual"). Default só serve a
+  /// criação implícita/lazy (extensão postando um passo antes de qualquer
+  /// POST /sessoes explícito) — nunca aparece no fluxo real conectado.
+  nome     String @default("Manual sem nome")
+  descricao String @default("")
+  url      String?
+  /// ModoCaptura ("extensao" | "embed").
+  modo     String @default("extensao")
+  estado   String @default("RASCUNHO")
+  criadaEm DateTime @default(now())
   /// Contador atômico para gerar `ordem` sem race condition (UPDATE ... SET proximoOrdem = proximoOrdem + 1 RETURNING).
   proximoOrdem Int      @default(0)
   passos       PassoGravado[]
@@ -46,6 +55,7 @@ model PassoGravado {
   registradoEm BigInt
 
   origem String @default("automatico")
+  incluidoNoGuia Boolean @default(true)
 
   /// SugestaoMascara[] — nunca editado in-place, só substituído por inteiro.
   sugestoesMascara  Json?

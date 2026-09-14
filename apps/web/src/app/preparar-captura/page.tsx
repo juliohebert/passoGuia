@@ -53,13 +53,30 @@ export default async function PaginaPrepararCaptura({
   searchParams: Promise<{ [chave: string]: string | string[] | undefined }>;
 }) {
   const consulta = await searchParams;
+  const sessaoId = texto(consulta.sessaoId);
   const modo: ModoCaptura = texto(consulta.modo) === "embed" ? "embed" : "extensao";
   const nome = texto(consulta.nome) || "Manual sem nome";
-  const url = texto(consulta.url) || "—";
   const projetoId = texto(consulta.projeto);
   const projetoNome = projetos.find((item) => item.id === projetoId)?.nome ?? "—";
   const info = instrucoes[modo];
   const IconeModo = modo === "embed" ? Blocks : Puzzle;
+
+  if (!sessaoId) {
+    return (
+      <div className="space-y-4">
+        <Link
+          href="/novo-manual"
+          className="inline-flex items-center gap-1.5 text-sm text-slate-500 transition-colors hover:text-slate-800"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Voltar
+        </Link>
+        <p className="rounded-xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+          Sessão inválida ou ausente. Volte a “Novo manual” para começar de novo.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -85,7 +102,7 @@ export default async function PaginaPrepararCaptura({
             <h2 className="text-sm font-semibold text-slate-900">Resumo do manual</h2>
             <dl className="mt-4 space-y-3 text-sm">
               <Linha rotulo="Nome" valor={nome} />
-              <Linha rotulo="URL / sistema" valor={url} />
+              <Linha rotulo="Sistema" valor="Detectado automaticamente pela extensão" />
               <Linha rotulo="Projeto" valor={projetoNome} />
               <div className="flex items-center justify-between gap-4">
                 <dt className="text-slate-500">Modo de captura</dt>
@@ -129,7 +146,7 @@ export default async function PaginaPrepararCaptura({
               ))}
             </ul>
           </Cartao>
-          <BotaoIniciarCaptura />
+          <BotaoIniciarCaptura sessaoId={sessaoId} />
         </aside>
       </div>
     </div>

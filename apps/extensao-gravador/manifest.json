@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "PassoGuia — Gravador (prova funcional)",
   "version": "0.0.0",
-  "description": "Prova: o clique no ícone injeta a captura na aba ativa (activeTab + scripting) -> content script -> service worker -> PassoCandidato + screenshot PRE redigido -> API local do PassoGuia. Sem <all_urls>, chrome.debugger, storage, auth ou UI.",
+  "description": "Grava qualquer sistema web: o clique no ícone inicia tabCapture uma vez, o documento offscreen mantém a MediaStream entre navegações e extrai screenshots PRE/POST para o service worker e a API local do PassoGuia. Sem audio, <all_urls> permanente ou chrome.debugger. storage guarda o sessaoId entregue diretamente pela web e o estado mínimo da sessão; externamente conectável apenas pela web local.",
   "background": {
     "service_worker": "dist/servico.js",
     "type": "module"
@@ -10,6 +10,11 @@
   "action": {
     "default_title": "PassoGuia — iniciar/encerrar captura na aba ativa"
   },
-  "permissions": ["activeTab", "scripting"],
-  "host_permissions": ["http://localhost/*"]
+  "permissions": ["activeTab", "scripting", "storage", "tabCapture", "offscreen"],
+  "host_permissions": ["http://localhost/*"],
+  "optional_host_permissions": ["*://*/*"],
+  "externally_connectable": {
+    "matches": ["http://localhost:3000/*", "http://127.0.0.1:3000/*"]
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq45npgZ0A/AbcC6EvkM4L+Pf9se3IE2m9ku8/pzK4xQG74wfh75eT0eMfEQMACXid9jGwIbWAuvCDm4d2l467hoyRzKvPg/OgwsZHeMVBkqhkbStgpwANUIzT2LVCYwx8mYM8psu7SCuicogpnGhmbMa5QXDDI/a8GgEw+QykpskCS38TIWAH7sx1J068ylcuxFek8IqK4/3WDcRAko3yAiKv7f4+xLwaZWh6eiJKHRwzjx+1VfEEIfVjChIw9TDaJyq4ob2urEWsGxbFFuXah/6jL4woTl+g0E4MRvySxQRGf3Uj883+srgugJaOa11cSLiYYrpJO9VQ5KCBeQPAQIDAQAB"
 }
