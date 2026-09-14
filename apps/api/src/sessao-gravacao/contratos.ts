@@ -3,8 +3,18 @@
  * Espelham os tipos de ação do @passoguia/nucleo-gravador sem depender dele.
  */
 
-export const TIPOS_ACAO = ["CLIQUE", "PREENCHIMENTO", "ROLAGEM", "NAVEGACAO"] as const;
+export const TIPOS_ACAO = ["CLIQUE", "PREENCHIMENTO", "ROLAGEM", "NAVEGACAO", "MANUAL"] as const;
 export type TipoAcao = (typeof TIPOS_ACAO)[number];
+
+/** Automático = capturado pela extensão; manual = criado no Editor do Manual. */
+export const ORIGENS_PASSO = ["automatico", "manual"] as const;
+export type OrigemPasso = (typeof ORIGENS_PASSO)[number];
+
+export const MODOS_CAPTURA = ["extensao", "embed"] as const;
+export type ModoCaptura = (typeof MODOS_CAPTURA)[number];
+
+export const ESTADOS_MANUAL = ["RASCUNHO", "EM_REVISAO", "CONFIRMADO"] as const;
+export type EstadoManual = (typeof ESTADOS_MANUAL)[number];
 
 export const CONFIANCAS_SUGESTAO = ["alta", "baixa"] as const;
 export type ConfiancaSugestao = (typeof CONFIANCAS_SUGESTAO)[number];
@@ -116,11 +126,20 @@ export interface PassoRecebido {
   ocorridoEm: number;
 }
 
-/** Passo persistido na sessão (em memória) e devolvido à web. */
+/** Atualização da imagem de um passo já criado, usada pelo POST pós-navegação. */
+export interface AtualizacaoImagemPasso {
+  imagemRedigida: string;
+  redacaoIncompleta: false;
+  revisaoPrivacidadeNecessaria: boolean;
+  sugestoesMascara?: SugestaoMascara[];
+  ocorridoEm: number;
+}
+
+/** Passo persistido na sessão e devolvido à web. */
 export interface PassoGravado extends PassoRecebido {
   id: string;
   ordem: number;
-  origem: "automatico";
+  origem: OrigemPasso;
   /** epoch (ms) de quando a API registrou o passo. */
   registradoEm: number;
   /**
@@ -136,10 +155,56 @@ export interface PassoGravado extends PassoRecebido {
    * `sugestoesMascara` na renderização.
    */
   anotacoesImagem?: AnotacaoImagem[];
+  incluidoNoGuia: boolean;
 }
 
 export interface ResumoSessao {
   sessaoId: string;
+  /** Nome do manual, dado pelo usuário ao criar a sessão em "Novo manual". */
+  nome: string;
+  descricao: string;
+  url?: string;
+  estado: EstadoManual;
+  modo: ModoCaptura;
   criadaEm: number;
   totalPassos: number;
+}
+
+/**
+ * Payload do POST /sessoes: cria uma sessão de verdade (fluxo "Novo manual").
+ * `sessaoId` é opcional (a API gera um se ausente) — nunca mais um id fixo.
+ */
+export interface CriacaoSessao {
+  sessaoId?: string;
+  nome: string;
+  descricao?: string;
+  url?: string;
+  modo?: ModoCaptura;
+}
+
+export interface AtualizacaoManual {
+  nome: string;
+  descricao?: string;
+}
+
+export interface AtualizacaoRevisaoPasso {
+  incluidoNoGuia: boolean;
+  removerImagem?: boolean;
+}
+
+// --- Editor do Manual: edição de título/descrição, reordenação, exclusão e
+// criação de passo manual — tudo depois que a gravação é encerrada. ---
+
+/** Payload do POST .../passos/manual: passo manual (sem screenshot, sem tipoAcao real). */
+export interface PassoManualRecebido {
+  titulo: string;
+  /** Opcional — ausente vira "sem descrição", nunca string vazia. */
+  descricao?: string;
+}
+
+/** Payload do PATCH .../passos/:correlacaoId: atualização de título/descrição de um passo existente. */
+export interface AtualizacaoPasso {
+  titulo: string;
+  /** Ausente/vazio limpa a descrição existente. */
+  descricao?: string;
 }

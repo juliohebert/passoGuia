@@ -1,18 +1,19 @@
 import type {
   AnotacaoImagem,
+  EstadoManual,
   ConfiancaSugestao,
   GeometriaAnotacao,
   MascaraAplicada,
+  ModoCaptura,
   OrigemMascara,
   PassoGravado,
+  ResumoSessao,
   SugestaoMascara,
   TipoAnotacao,
 } from "@/dominio/tipos";
 
 /** Base da API do PassoGuia. Sem auth nesta etapa. */
 export const URL_API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
-/** sessaoId fixo desta prova — combinado com a extensão. */
-export const SESSAO_PROVA = "prova-local";
 
 function texto(valor: unknown): string | undefined {
   return typeof valor === "string" && valor.trim() !== "" ? valor.trim() : undefined;
@@ -174,7 +175,7 @@ function normalizarPasso(bruto: unknown): PassoGravado {
     id: texto(registro.id) ?? correlacaoId ?? crypto.randomUUID(),
     ordem: typeof registro.ordem === "number" ? registro.ordem : 0,
     titulo: texto(registro.titulo) ?? "Passo",
-    origem: "automatico",
+    origem: registro.origem === "manual" ? "manual" : "automatico",
     ...(descricao ? { descricao } : {}),
     ...(imagemRedigida ? { imagemRedigida } : {}),
     ...(typeof registro.redacaoIncompleta === "boolean"
@@ -187,7 +188,103 @@ function normalizarPasso(bruto: unknown): PassoGravado {
     ...(mascarasAplicadas ? { mascarasAplicadas } : {}),
     ...(anotacoesImagem ? { anotacoesImagem } : {}),
     ...(correlacaoId ? { correlacaoId } : {}),
+    incluidoNoGuia: registro.incluidoNoGuia !== false,
   };
+}
+
+function ehModoCaptura(valor: unknown): valor is ModoCaptura {
+  return valor === "extensao" || valor === "embed";
+}
+
+function normalizarResumoSessao(bruto: unknown): ResumoSessao | null {
+  if (typeof bruto !== "object" || bruto === null) {
+    return null;
+  }
+  const registro = bruto as Record<string, unknown>;
+  const sessaoId = texto(registro.sessaoId);
+  const nome = texto(registro.nome);
+  const criadaEm = numero(registro.criadaEm);
+  const totalPassos = numero(registro.totalPassos);
+  if (!sessaoId || !nome || criadaEm === undefined || totalPassos === undefined || !ehModoCaptura(registro.modo)) {
+    return null;
+  }
+  const url = texto(registro.url);
+  const estado: EstadoManual = registro.estado === "EM_REVISAO" || registro.estado === "CONFIRMADO" ? registro.estado : "RASCUNHO";
+  return { sessaoId, nome, ...(url ? { url } : {}), modo: registro.modo, criadaEm, totalPassos, descricao: texto(registro.descricao) ?? "", estado };
+}
+
+/**
+ * Cria uma sessão real (fluxo "Novo manual"). `null` em caso de falha (rede,
+ * validação): a página decide como avisar o usuário — nunca segue com um
+ * `sessaoId` inventado no cliente.
+ */
+export async function criarSessao(dados: {
+  nome: string;
+  descricao?: string;
+  url?: string;
+  modo?: ModoCaptura;
+}): Promise<ResumoSessao | null> {
+  try {
+    const resposta = await fetch(`${URL_API}/sessoes`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(dados),
+    });
+    if (!resposta.ok) {
+      return null;
+    }
+    return normalizarResumoSessao(await resposta.json());
+  } catch {
+    return null;
+  }
+}
+
+export async function atualizarManual(sessaoId: string, dados: { nome: string; descricao: string }): Promise<ResumoSessao | null> {
+  try {
+    const resposta = await fetch(`${URL_API}/sessoes/${encodeURIComponent(sessaoId)}/manual`, {
+      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(dados),
+    });
+    return resposta.ok ? normalizarResumoSessao(await resposta.json()) : null;
+  } catch { return null; }
+}
+
+export async function confirmarGuia(sessaoId: string): Promise<ResumoSessao | null> {
+  try {
+    const resposta = await fetch(`${URL_API}/sessoes/${encodeURIComponent(sessaoId)}/confirmar`, { method: "POST" });
+    return resposta.ok ? normalizarResumoSessao(await resposta.json()) : null;
+  } catch { return null; }
+}
+
+export async function atualizarRevisaoPasso(
+  sessaoId: string,
+  correlacaoId: string,
+  dados: { incluidoNoGuia: boolean; removerImagem?: boolean },
+): Promise<PassoGravado | null> {
+  try {
+    const resposta = await fetch(`${URL_API}/sessoes/${encodeURIComponent(sessaoId)}/passos/${encodeURIComponent(correlacaoId)}/revisao`, {
+      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(dados),
+    });
+    return resposta.ok ? normalizarPasso(await resposta.json()) : null;
+  } catch { return null; }
+}
+
+/**
+ * Busca uma sessão já existente (sem criar). `null` quando a sessão não
+ * existe (404) ou em falha de rede — quem chama trata os dois casos como
+ * "sessão inválida", mostrando um erro controlado em vez de seguir vazio.
+ */
+export async function buscarSessao(sessaoId: string): Promise<ResumoSessao | null> {
+  try {
+    const resposta = await fetch(`${URL_API}/sessoes/${encodeURIComponent(sessaoId)}`, {
+      cache: "no-store",
+    });
+    if (!resposta.ok) {
+      return null;
+    }
+    return normalizarResumoSessao(await resposta.json());
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -212,9 +309,9 @@ export function mesclarPassos(doGet: PassoGravado[], atuais: PassoGravado[]): Pa
 }
 
 /** Carrega os passos já registrados na sessão (GET). */
-export async function carregarPassos(): Promise<PassoGravado[]> {
+export async function carregarPassos(sessaoId: string): Promise<PassoGravado[]> {
   try {
-    const resposta = await fetch(`${URL_API}/sessoes/${SESSAO_PROVA}/passos`, {
+    const resposta = await fetch(`${URL_API}/sessoes/${encodeURIComponent(sessaoId)}/passos`, {
       cache: "no-store",
     });
     if (!resposta.ok) {
@@ -234,12 +331,13 @@ export async function carregarPassos(): Promise<PassoGravado[]> {
  * avisar o usuário, a UI não assume sucesso silenciosamente.
  */
 export async function salvarMascaras(
+  sessaoId: string,
   correlacaoId: string,
   mascaras: MascaraAplicada[],
 ): Promise<PassoGravado | null> {
   try {
     const resposta = await fetch(
-      `${URL_API}/sessoes/${SESSAO_PROVA}/passos/${encodeURIComponent(correlacaoId)}/mascaras`,
+      `${URL_API}/sessoes/${encodeURIComponent(sessaoId)}/passos/${encodeURIComponent(correlacaoId)}/mascaras`,
       {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -262,12 +360,13 @@ export async function salvarMascaras(
  * chama decide como avisar o usuário, a UI não assume sucesso silenciosamente.
  */
 export async function salvarAnotacoes(
+  sessaoId: string,
   correlacaoId: string,
   anotacoes: AnotacaoImagem[],
 ): Promise<PassoGravado | null> {
   try {
     const resposta = await fetch(
-      `${URL_API}/sessoes/${SESSAO_PROVA}/passos/${encodeURIComponent(correlacaoId)}/anotacoes`,
+      `${URL_API}/sessoes/${encodeURIComponent(sessaoId)}/passos/${encodeURIComponent(correlacaoId)}/anotacoes`,
       {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -283,9 +382,100 @@ export async function salvarAnotacoes(
   }
 }
 
+/**
+ * Cria um passo manual (Editor do Manual) — sem screenshot, ao final da
+ * sessão. `null` em caso de falha (rede, validação): quem chama decide como
+ * avisar o usuário.
+ */
+export async function criarPassoManual(
+  sessaoId: string,
+  titulo: string,
+  descricao?: string,
+): Promise<PassoGravado | null> {
+  try {
+    const resposta = await fetch(`${URL_API}/sessoes/${encodeURIComponent(sessaoId)}/passos/manual`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ titulo, ...(descricao ? { descricao } : {}) }),
+    });
+    if (!resposta.ok) {
+      return null;
+    }
+    return normalizarPasso(await resposta.json());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Atualiza título/descrição de um passo (Editor do Manual). `null` em caso
+ * de falha (rede, passo não encontrado, validação).
+ */
+export async function atualizarTituloDescricao(
+  sessaoId: string,
+  correlacaoId: string,
+  titulo: string,
+  descricao?: string,
+): Promise<PassoGravado | null> {
+  try {
+    const resposta = await fetch(
+      `${URL_API}/sessoes/${encodeURIComponent(sessaoId)}/passos/${encodeURIComponent(correlacaoId)}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ titulo, ...(descricao ? { descricao } : {}) }),
+      },
+    );
+    if (!resposta.ok) {
+      return null;
+    }
+    return normalizarPasso(await resposta.json());
+  } catch {
+    return null;
+  }
+}
+
+/** Exclui um passo (Editor do Manual). Devolve `true`/`false` — nunca lança. */
+export async function excluirPasso(sessaoId: string, correlacaoId: string): Promise<boolean> {
+  try {
+    const resposta = await fetch(
+      `${URL_API}/sessoes/${encodeURIComponent(sessaoId)}/passos/${encodeURIComponent(correlacaoId)}`,
+      { method: "DELETE" },
+    );
+    return resposta.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reordena os passos da sessão (Editor do Manual, drag-and-drop) — envia a
+ * lista completa de `correlacaoId` na ordem final desejada. `null` em caso
+ * de falha (rede, lista não bate com os passos da sessão).
+ */
+export async function reordenarPassos(
+  sessaoId: string,
+  ordemCorrelacaoIds: string[],
+): Promise<PassoGravado[] | null> {
+  try {
+    const resposta = await fetch(`${URL_API}/sessoes/${encodeURIComponent(sessaoId)}/passos/reordenar`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ordem: ordemCorrelacaoIds }),
+    });
+    if (!resposta.ok) {
+      return null;
+    }
+    const bruto: unknown = await resposta.json();
+    return Array.isArray(bruto) ? bruto.map(normalizarPasso) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Assina os passos novos da sessão via SSE. Devolve uma função para fechar a conexão. */
-export function abrirFluxoDePassos(aoReceber: (passo: PassoGravado) => void): () => void {
-  const fonte = new EventSource(`${URL_API}/sessoes/${SESSAO_PROVA}/eventos`);
+export function abrirFluxoDePassos(sessaoId: string, aoReceber: (passo: PassoGravado) => void): () => void {
+  const fonte = new EventSource(`${URL_API}/sessoes/${encodeURIComponent(sessaoId)}/eventos`);
   fonte.onmessage = (evento) => {
     try {
       aoReceber(normalizarPasso(JSON.parse(evento.data) as unknown));

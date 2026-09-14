@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { validarAnotacoesImagem, validarMascarasAplicadas, validarPassoRecebido } from "./validacao";
+import {
+  validarAnotacoesImagem,
+  validarAtualizacaoOrigemSessao,
+  validarAtualizacaoPasso,
+  validarCriacaoSessao,
+  validarMascarasAplicadas,
+  validarPassoManualRecebido,
+  validarPassoRecebido,
+  validarReordenacaoPassos,
+} from "./validacao";
 
 const base = {
   correlacaoId: "abc-123",
@@ -81,6 +90,17 @@ describe("validarPassoRecebido", () => {
   it("rejeita ocorridoEm inválido", () => {
     expect(() => validarPassoRecebido({ ...base, ocorridoEm: -1 })).toThrow(/ocorridoEm/);
     expect(() => validarPassoRecebido({ ...base, ocorridoEm: "agora" })).toThrow(/ocorridoEm/);
+  });
+
+  it("rejeita ocorridoEm fracionário — causa raiz do 500 no POST de passos", () => {
+    // A coluna é BigInt (ver schema.prisma); `BigInt(valor)` lança RangeError
+    // não capturado para qualquer fração. `performance.timeOrigin +
+    // evento.timeStamp` (extensão, ver instante.ts) produz exatamente isso
+    // quando não é arredondado — sem este check, o passo derruba a API com
+    // 500 em vez de receber um 400 claro.
+    expect(() => validarPassoRecebido({ ...base, ocorridoEm: 1_700_000_000_123.456 })).toThrow(
+      /ocorridoEm/,
+    );
   });
 
   it("rejeita redacaoIncompleta que não é booleano", () => {
@@ -365,5 +385,127 @@ describe("validarAnotacoesImagem — editor de imagem (PATCH .../anotacoes)", ()
   it("rejeita lista maior que o máximo permitido", () => {
     const muitas = Array.from({ length: 151 }, (_, i) => ({ ...mascara, id: `a${String(i)}` }));
     expect(() => validarAnotacoesImagem(muitas)).toThrow(/anotacoesImagem/);
+  });
+});
+
+describe("validarPassoManualRecebido — Editor do Manual (POST .../passos/manual)", () => {
+  it("aceita título obrigatório e descrição opcional", () => {
+    const dados = validarPassoManualRecebido({ titulo: "Conferir valores", descricao: "Revisar antes de emitir." });
+    expect(dados.titulo).toBe("Conferir valores");
+    expect(dados.descricao).toBe("Revisar antes de emitir.");
+  });
+
+  it("descrição é opcional — ausente na entrada, ausente na saída", () => {
+    const dados = validarPassoManualRecebido({ titulo: "Conferir valores" });
+    expect(dados.descricao).toBeUndefined();
+  });
+
+  it("rejeita título ausente ou vazio", () => {
+    expect(() => validarPassoManualRecebido({})).toThrow(/titulo/);
+    expect(() => validarPassoManualRecebido({ titulo: "   " })).toThrow(/titulo/);
+  });
+
+  it("nunca aceita campos extras (screenshot, tipoAcao etc.) — whitelist estrita", () => {
+    const dados = validarPassoManualRecebido({
+      titulo: "Passo",
+      imagemRedigida: "data:image/png;base64,AAAA",
+      tipoAcao: "CLIQUE",
+    });
+    expect(Object.keys(dados).sort()).toEqual(["titulo"].sort());
+  });
+});
+
+describe("validarAtualizacaoPasso — Editor do Manual (PATCH .../passos/:correlacaoId)", () => {
+  it("aceita título e descrição", () => {
+    const dados = validarAtualizacaoPasso({ titulo: "Novo título", descricao: "Nova descrição." });
+    expect(dados).toEqual({ titulo: "Novo título", descricao: "Nova descrição." });
+  });
+
+  it("descrição ausente/vazia limpa a descrição (não aparece na saída)", () => {
+    expect(validarAtualizacaoPasso({ titulo: "Passo" }).descricao).toBeUndefined();
+    expect(validarAtualizacaoPasso({ titulo: "Passo", descricao: "   " }).descricao).toBeUndefined();
+  });
+
+  it("rejeita título ausente ou vazio", () => {
+    expect(() => validarAtualizacaoPasso({})).toThrow(/titulo/);
+    expect(() => validarAtualizacaoPasso({ titulo: "" })).toThrow(/titulo/);
+  });
+
+  it("rejeita título/descrição além do tamanho máximo", () => {
+    expect(() => validarAtualizacaoPasso({ titulo: "a".repeat(201) })).toThrow(/titulo/);
+    expect(() => validarAtualizacaoPasso({ titulo: "Passo", descricao: "a".repeat(401) })).toThrow(/descricao/);
+  });
+});
+
+describe("validarReordenacaoPassos — Editor do Manual (PATCH .../passos/reordenar)", () => {
+  it("aceita uma lista de correlacaoId", () => {
+    expect(validarReordenacaoPassos({ ordem: ["c1", "c2", "c3"] })).toEqual(["c1", "c2", "c3"]);
+  });
+
+  it("rejeita quando ordem não é uma lista", () => {
+    expect(() => validarReordenacaoPassos({ ordem: "c1" })).toThrow(/ordem/);
+    expect(() => validarReordenacaoPassos({})).toThrow(/ordem/);
+  });
+
+  it("rejeita lista vazia", () => {
+    expect(() => validarReordenacaoPassos({ ordem: [] })).toThrow(/vazia/);
+  });
+
+  it("rejeita item não-string ou vazio na lista", () => {
+    expect(() => validarReordenacaoPassos({ ordem: ["c1", 2] })).toThrow();
+    expect(() => validarReordenacaoPassos({ ordem: ["c1", "   "] })).toThrow();
+  });
+
+  it("rejeita correlacaoId duplicado na lista", () => {
+    expect(() => validarReordenacaoPassos({ ordem: ["c1", "c2", "c1"] })).toThrow(/duplicado/);
+  });
+});
+
+describe("validarCriacaoSessao — POST /sessoes (Novo manual)", () => {
+  it("aceita um payload mínimo (só nome)", () => {
+    const dados = validarCriacaoSessao({ nome: "Emitir nota fiscal" });
+    expect(dados.nome).toBe("Emitir nota fiscal");
+    expect(dados.url).toBeUndefined();
+    expect(dados.modo).toBeUndefined();
+    expect(dados.sessaoId).toBeUndefined();
+  });
+
+  it("aceita url, modo e sessaoId opcionais", () => {
+    const dados = validarCriacaoSessao({
+      nome: "Emitir nota fiscal",
+      url: "https://sistema.exemplo.com",
+      modo: "embed",
+      sessaoId: "sessao-123",
+    });
+    expect(dados.url).toBe("https://sistema.exemplo.com");
+    expect(dados.modo).toBe("embed");
+    expect(dados.sessaoId).toBe("sessao-123");
+  });
+
+  it("rejeita nome ausente ou vazio", () => {
+    expect(() => validarCriacaoSessao({})).toThrow(/nome/);
+    expect(() => validarCriacaoSessao({ nome: "   " })).toThrow(/nome/);
+  });
+
+  it("rejeita modo inválido", () => {
+    expect(() => validarCriacaoSessao({ nome: "X", modo: "outro" })).toThrow(/modo/);
+  });
+});
+
+describe("validarAtualizacaoOrigemSessao — PATCH /sessoes/:sessaoId (identificação automática pela extensão)", () => {
+  it("aceita uma url válida", () => {
+    expect(validarAtualizacaoOrigemSessao({ url: "https://ng.quarkclinic.com.br" })).toEqual({
+      url: "https://ng.quarkclinic.com.br",
+    });
+  });
+
+  it("rejeita url ausente ou vazia — nunca fica sem valor (extensão sempre manda a origem detectada)", () => {
+    expect(() => validarAtualizacaoOrigemSessao({})).toThrow(/url/);
+    expect(() => validarAtualizacaoOrigemSessao({ url: "   " })).toThrow(/url/);
+  });
+
+  it("rejeita payload que não é um objeto", () => {
+    expect(() => validarAtualizacaoOrigemSessao(null)).toThrow(/objeto/);
+    expect(() => validarAtualizacaoOrigemSessao("string")).toThrow(/objeto/);
   });
 });

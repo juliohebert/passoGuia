@@ -21,6 +21,7 @@ function linha(sobrescritas: Partial<LinhaPassoGravado> = {}): LinhaPassoGravado
     ocorridoEm: 1_700_000_000_000n,
     registradoEm: 1_700_000_000_500n,
     origem: "automatico",
+    incluidoNoGuia: true,
     sugestoesMascara: null,
     mascarasAplicadas: null,
     anotacoesImagem: null,
