@@ -1,38 +1,52 @@
 import { criarGravador, type Gravador } from "@passoguia/nucleo-gravador";
 import type { PassoCandidato } from "@passoguia/nucleo-gravador";
-import { capturarAbaVisivel, type Frame } from "./captura-tela";
+import {
+  capturarFrameAtual,
+  iniciarCapturaStream,
+  pararCapturaStream,
+  registrarErroFatalDaCaptura,
+  restaurarCapturaStream,
+  type Frame,
+} from "./captura-stream";
 import { descricaoDoPasso } from "./descricao-passo";
-import { DIAGNOSTICO_ATIVO } from "./diagnostico-flag";
 import { prepararCaptura, type FrameProcessado } from "./destaque-frame";
-import { enviarPasso } from "./envio-api";
+import { atualizarImagemPasso, atualizarOrigemDaSessao, enviarPasso } from "./envio-api";
+import { marcarIconeAguardandoPermissao, marcarIconeAtivo, marcarIconeInativo } from "./icone-acao";
 import { injetarNaAba } from "./injecao";
+import { decidirNavegacao } from "./mesmo-site";
+import { solicitarPermissaoParaNavegacoes } from "./permissao-site";
 import {
   adicionarPreAcao,
-  aguardarComTimeout,
   localizarEConsumirPreAcao,
   podarPreAcoes,
 } from "./pre-acoes";
+import { iniciarPonteWeb } from "./ponte-web";
+import {
+  aguardarPostAposNavegacao,
+  type MotivoPost,
+  registrarNavegacaoIniciada,
+  sinalizarMudancaPosAcao,
+  sinalizarNavegacaoParaPost,
+} from "./post-acao";
 import { NOME_PORTA, type MensagemCS, type Retangulo, type RelatorioFrame } from "./protocolo";
 import { consolidarRedacao, type Consolidado } from "./redacao-consolidacao";
+import { selecionarCaptura } from "./selecao-captura";
 import {
-  registrarFrameDoPasso,
-  registrarPassoComRevisao,
-  registrarPassoSemFrame,
-} from "./registro-prova";
-import {
-  TIPO_LISTAR,
-  type RegistroProva,
-  type RespostaListar,
-} from "./tipos-diagnostico";
+  lerSessaoAtivaPersistida,
+  limparSessaoAtivaPersistida,
+  persistirSessaoAtiva,
+} from "./sessao-persistida";
 import { tituloDoPasso } from "./titulo-passo";
 
-// Retenção só em memória para a página de diagnóstico (sem storage).
-const MAX_REGISTROS = 20;
 // Quanto esperar os relatórios dos demais frames antes de decidir fail-safe.
 const TIMEOUT_RELATORIO_MS = 200;
 // Pequena estabilização antes do screenshot POST — dá tempo do dropdown/menu/
 // modal terminar de abrir (animação/render) antes de capturar a aba.
 const ATRASO_ESTABILIZACAO_POS_MS = 180;
+// Pequena margem depois do documento estar pronto para que o primeiro frame
+// do tabCapture represente a tela de destino, sem impor um atraso grande a
+// ações que não navegam.
+const ATRASO_DEBOUNCE_NAVEGACAO_MS = 60;
 // Máximo de PRE-AÇÕES pendentes por aba (buffer, não mais um slot único —
 // ver PreAcao/preAcoesPorAba). Cliques rápidos consecutivos ficam todos em
 // voo ao mesmo tempo (pointerdown dispara a captura antes do clique fechar a
@@ -42,11 +56,6 @@ const MAX_PRE_PENDENTES_POR_ABA = 8;
 // Poda por idade: uma PRE-AÇÃO nunca reclamada por tempo maior que isso é
 // lixo (clique nunca fechou uma ação) — descartada para não vazar memória.
 const TTL_PRE_PENDENTE_MS = 8000;
-// Quanto tempo, no máximo, o consolidarPasso espera pela captura PRE já em
-// voo antes de desistir e enviar o passo sem imagem — nunca trava o restante
-// do recorder (outras mensagens continuam processando normalmente).
-const TIMEOUT_ESPERA_PRE_MS = 1500;
-
 interface FramePort {
   porta: chrome.runtime.Port;
   url: string;
@@ -60,7 +69,6 @@ interface CapturaPos {
 }
 
 interface PreAcao {
-  diagId: string | undefined;
   criadoEm: number;
   instanteApontar: number;
   triggerFrameId: number;
@@ -68,18 +76,25 @@ interface PreAcao {
   triggerRelatorio: RelatorioFrame;
   alvoRect: Retangulo;
   framePromise: Promise<Frame | null>;
-  /** true assim que framePromise resolve — só para diagnóstico ("PRE pronta ou pendente?"). */
-  frameResolvido: boolean;
   relatoriosPromise: Promise<Map<number, RelatorioFrame>>;
   abreUiTransitoria: boolean;
-  posPromise: Promise<CapturaPos> | undefined;
+  postNavegacaoPromise: Promise<MotivoPost> | undefined;
 }
 
 interface SessaoProva {
   tabId: number;
   windowId: number;
-  /** Origem (protocolo+host+porta) da aba quando a sessão iniciou. */
-  origem: string;
+  /**
+   * Sites (origens representativas) já autorizados NESTA gravação — uma
+   * gravação pode autorizar vários sistemas ao longo do tempo (ver
+   * mesmo-site.ts: `decidirNavegacao`/`sitePermitidoNaLista` decidem por
+   * SITE — domínio-base via Public Suffix List —, não por origem exata;
+   * subdomínios de qualquer site desta lista continuam vinculados à mesma
+   * gravação).
+   */
+  sitesAutorizados: string[];
+  /** Mantido para compatibilidade do estado persistido entre reinícios. */
+  pausada: boolean;
 }
 
 function origemDe(url: string | undefined): string {
@@ -91,10 +106,6 @@ function origemDe(url: string | undefined): string {
   } catch {
     return "";
   }
-}
-
-function mesmaOrigem(url: string | undefined, origem: string): boolean {
-  return origem !== "" && origemDe(url) === origem;
 }
 
 async function urlDaAba(tabId: number): Promise<string | undefined> {
@@ -115,12 +126,59 @@ const gravadoresPorAba = new Map<number, Gravador>();
  * localizarEConsumirPreAcao / podarPreAcoes.
  */
 const preAcoesPorAba = new Map<number, PreAcao[]>();
-const registrosProva = new Map<string, RegistroProva>();
 const portasPorAba = new Map<number, Map<number, FramePort>>();
 const pendentesRelatorio = new Map<number, Map<number, (r: RelatorioFrame) => void>>();
 // Abas onde o content script já foi injetado nesta carga da página (evita injeção dupla).
 const abasInjetadas = new Set<number>();
 let sessaoAtiva: SessaoProva | undefined;
+
+registrarErroFatalDaCaptura((motivo) => {
+  const sessao = sessaoAtiva;
+  if (!sessao) {
+    return;
+  }
+  console.error("[extensao-gravador][captura-stream][erro] captura encerrada", motivo);
+  sessaoAtiva = undefined;
+  void marcarIconeInativo(sessao.tabId);
+  void limparSessaoAtivaPersistida();
+  void pararCapturaStream();
+});
+
+/**
+ * `sessaoAtiva` vive só nesta variável em memória — o MV3 mata o service
+ * worker por inatividade (ou o navegador o suspende) e ZERA isso, mesmo com
+ * uma gravação em andamento (ver sessao-persistida.ts). Restaura de
+ * `chrome.storage.session` assim que o módulo carrega (todo boot do service
+ * worker reexecuta o topo do arquivo), ANTES de qualquer evento real ser
+ * processado — os pontos que leem `sessaoAtiva` para decidir algo
+ * (`processarMensagem`, `aoAtualizarAba`, `aoClicarNoIcone`) esperam esta
+ * promise primeiro, então nunca correm à frente da restauração. Reflete o
+ * ícone laranja de novo (o Chrome costuma manter isso por conta própria,
+ * mas nunca por garantia — restaurado aqui de qualquer forma).
+ */
+async function restaurarSessaoAtiva(): Promise<void> {
+  const persistida = await lerSessaoAtivaPersistida();
+  if (!persistida) {
+    return;
+  }
+  sessaoAtiva = {
+    tabId: persistida.tabId,
+    windowId: persistida.windowId,
+    sitesAutorizados: persistida.sitesAutorizados,
+    pausada: persistida.pausada,
+  };
+  const streamRestaurada = await restaurarCapturaStream();
+  sessaoAtiva.pausada = persistida.pausada || !streamRestaurada;
+  void (sessaoAtiva.pausada ? marcarIconeAguardandoPermissao(persistida.tabId) : marcarIconeAtivo(persistida.tabId));
+  console.info(
+    "[extensao-gravador][sessao] restaurada após reinício/suspensão do service worker; aba",
+    persistida.tabId,
+    sessaoAtiva.pausada ? "(pausada; stream indisponível)" : "(stream restaurada)",
+    persistida.sitesAutorizados.join(", ") || "(nenhum ainda)",
+  );
+}
+
+const restauracaoDaSessaoAtiva: Promise<void> = restaurarSessaoAtiva();
 
 function gravadorDaAba(abaId: number): Gravador {
   let gravador = gravadoresPorAba.get(abaId);
@@ -129,17 +187,6 @@ function gravadorDaAba(abaId: number): Gravador {
     gravadoresPorAba.set(abaId, gravador);
   }
   return gravador;
-}
-
-function guardarRegistro(registro: RegistroProva): void {
-  registrosProva.set(registro.correlacaoId, registro);
-  while (registrosProva.size > MAX_REGISTROS) {
-    const antigo = registrosProva.keys().next().value;
-    if (antigo === undefined) {
-      break;
-    }
-    registrosProva.delete(antigo);
-  }
 }
 
 function urlsPorFrame(tabId: number): Map<number, string> {
@@ -216,77 +263,45 @@ function coletarRelatorios(
  */
 async function capturarPos(
   tabId: number,
-  windowId: number,
   triggerFrameId: number,
+  atrasoMs = ATRASO_ESTABILIZACAO_POS_MS,
 ): Promise<CapturaPos> {
-  await aguardar(ATRASO_ESTABILIZACAO_POS_MS);
+  if (atrasoMs > 0) {
+    await aguardar(atrasoMs);
+  }
   const [frame, relatorios] = await Promise.all([
-    capturarAbaVisivel(windowId),
+    capturarFrameAtual(),
     coletarRelatorios(tabId),
   ]);
-  return { frame, triggerRelatorio: relatorios.get(triggerFrameId), outros: relatorios };
+  return {
+    frame,
+    // Após uma navegação o frame que disparou o clique pode receber outro id;
+    // o relatório do topo ainda representa a tela POST e é um fallback seguro.
+    triggerRelatorio: relatorios.get(triggerFrameId) ?? relatorios.get(0),
+    outros: relatorios,
+  };
 }
 
 function iniciarGatilho(
   tabId: number,
-  windowId: number,
   frameId: number,
   msg: Extract<MensagemCS, { tipo: "gatilho" }>,
 ): void {
   const instanteApontar = msg.evento.instante;
   const criadoEm = Date.now();
-  if (DIAGNOSTICO_ATIVO) {
-    console.info("[diag][servico] início da captura PRE", {
-      diagId: msg.diagId,
-      tabId,
-      instanteApontar,
-    });
-  }
   const nova: PreAcao = {
-    diagId: msg.diagId,
     criadoEm,
     instanteApontar,
     triggerFrameId: frameId,
     triggerUrl: portasPorAba.get(tabId)?.get(frameId)?.url ?? "",
     triggerRelatorio: msg.relatorio,
     alvoRect: msg.alvoRect,
-    framePromise: capturarAbaVisivel(windowId),
-    frameResolvido: false,
+    framePromise: capturarFrameAtual(),
     relatoriosPromise: coletarRelatorios(tabId, frameId),
     abreUiTransitoria: msg.abreUiTransitoria,
-    posPromise: msg.abreUiTransitoria ? capturarPos(tabId, windowId, frameId) : undefined,
+    postNavegacaoPromise: aguardarPostAposNavegacao(tabId, instanteApontar),
   };
-  // Não inicia uma segunda captura: só anexa um tap diagnóstico à MESMA promise.
-  nova.framePromise = nova.framePromise.then((frame) => {
-    nova.frameResolvido = true;
-    if (DIAGNOSTICO_ATIVO) {
-      console.info("[diag][servico] fim da captura PRE", {
-        diagId: msg.diagId,
-        tabId,
-        instanteApontar,
-        sucesso: frame !== null,
-        duracaoMs: Date.now() - criadoEm,
-      });
-    }
-    return frame;
-  });
-
   adicionarPreAcao(preAcoesPorAba, tabId, nova, MAX_PRE_PENDENTES_POR_ABA, TTL_PRE_PENDENTE_MS);
-}
-
-function registroSemImagem(
-  correlacaoId: string,
-  passo: PassoCandidato,
-  motivos: string[],
-): RegistroProva {
-  return {
-    correlacaoId,
-    tipoAcao: passo.acao.tipo,
-    seletor: passo.acao.alvo?.seletor,
-    pre: null,
-    redacaoIncompleta: true,
-    motivos,
-  };
 }
 
 /**
@@ -315,7 +330,7 @@ function processarCaptura(
   triggerFrameId: number,
   triggerUrl: string,
   triggerRelatorio: RelatorioFrame,
-  alvoRect: Retangulo,
+  alvoRect: Retangulo | undefined,
   outros: Map<number, RelatorioFrame>,
   tabId: number,
 ): { consolidado: Consolidado; redacaoIncompleta: boolean } {
@@ -333,7 +348,6 @@ function processarCaptura(
 async function consolidarPasso(
   tabId: number,
   passo: PassoCandidato,
-  diagId?: string,
 ): Promise<void> {
   if (passo.acao.tipo !== "CLIQUE") {
     return;
@@ -351,44 +365,14 @@ async function consolidarPasso(
   // atropelarem (ver localizarEConsumirPreAcao).
   podarPreAcoes(preAcoesPorAba, tabId, MAX_PRE_PENDENTES_POR_ABA, TTL_PRE_PENDENTE_MS);
   const pre = localizarEConsumirPreAcao(preAcoesPorAba, tabId, passo.acao.inicio);
-  if (DIAGNOSTICO_ATIVO) {
-    console.info("[diag][servico] chegada do click", {
-      diagId,
-      tabId,
-      seletor: passo.acao.alvo?.seletor,
-      acaoInicio: passo.acao.inicio,
-      preEncontrada: pre !== undefined,
-      preJaPronta: pre?.frameResolvido === true,
-    });
-  }
-
   const correlacaoId = crypto.randomUUID();
-  // DIAGNOSTICO TEMP: correlaciona o diagId (conteudo.ts) com o correlacaoId real
-  // (o único id que efetivamente viaja até a API).
-  if (DIAGNOSTICO_ATIVO) {
-    console.info("[diag][servico] correlacaoId atribuído", {
-      diagId,
-      correlacaoId,
-      seletor: passo.acao.alvo?.seletor,
-      temPreAcao: pre !== undefined,
-    });
-  }
 
   // NOVA POLÍTICA: privacidade nunca mais descarta a imagem inteira. Um passo só
   // fica sem screenshot por razão de INFRAESTRUTURA (sem PRE-AÇÃO / sem frame /
   // falha de canvas) — nunca porque a detecção automática de regiões sensíveis
   // não teve 100% de certeza. Nesse caso a imagem VAI, marcada com
   // revisaoPrivacidadeNecessaria=true.
-  const enviarSemImagem = (motivos: string[]): void => {
-    guardarRegistro(registroSemImagem(correlacaoId, passo, motivos));
-    registrarPassoSemFrame(tabId, passo, motivos.join("; "));
-    if (DIAGNOSTICO_ATIVO) {
-      console.info("[diag][servico] enviando passo SEM imagem (infra)", {
-        diagId,
-        correlacaoId,
-        motivos,
-      });
-    }
+  const enviarSemImagem = (): void => {
     void enviarPasso({
       ...payloadBase(correlacaoId, passo),
       redacaoIncompleta: true,
@@ -398,35 +382,18 @@ async function consolidarPasso(
   };
 
   if (!pre) {
-    enviarSemImagem(["sem pré-ação registrada para este clique"]);
+    enviarSemImagem();
     return;
   }
 
   // localizarEConsumirPreAcao já garante instanteApontar === passo.acao.inicio
-  // (match exato) — não inicia uma segunda captura: só ESPERA a que já está em
-  // voo, com um teto curto para nunca travar o recorder caso ela demore demais.
-  const { valor: framePre, expirou } = await aguardarComTimeout(
-    pre.framePromise,
-    TIMEOUT_ESPERA_PRE_MS,
-  );
-  registrarFrameDoPasso(correlacaoId, tabId, passo, framePre);
-  if (DIAGNOSTICO_ATIVO) {
-    console.info("[diag][servico] momento da consolidação", {
-      diagId,
-      correlacaoId,
-      capturaPreDisponivel: framePre !== null,
-      esperouTimeout: expirou,
-    });
-  }
+  // (match exato) — não inicia uma segunda captura: só espera a captura PRE
+  // existente, que pode estar aguardando a fila global do Chrome. Fallback sem
+  // imagem só acontece quando a captura realmente falha.
+  const framePre = await pre.framePromise;
 
-  if (expirou) {
-    enviarSemImagem([
-      `screenshot PRE-AÇÃO não terminou a tempo (timeout de ${String(TIMEOUT_ESPERA_PRE_MS)}ms)`,
-    ]);
-    return;
-  }
   if (!framePre) {
-    enviarSemImagem(["screenshot PRE-AÇÃO indisponível"]);
+    enviarSemImagem();
     return;
   }
 
@@ -444,11 +411,7 @@ async function consolidarPasso(
     // Só acontece quando nem o frame de topo respondeu: sem viewport não há
     // como escalar NADA com segurança — este é o único caso "sem imagem"
     // depois de termos um screenshot em mãos.
-    enviarSemImagem(
-      resultadoPre.consolidado.motivos.length
-        ? resultadoPre.consolidado.motivos
-        : ["consolidação de redação impossível"],
-    );
+    enviarSemImagem();
     return;
   }
 
@@ -460,9 +423,19 @@ async function consolidarPasso(
   );
   if (!processadoPre) {
     // Falha real ao decodificar a imagem — não dá pra produzir metadados com segurança.
-    enviarSemImagem(["falha ao processar a captura"]);
+    enviarSemImagem();
     return;
   }
+
+  const revisaoPre = resultadoPre.consolidado.revisaoNecessaria || processadoPre.sugestoesMascara.length > 0;
+  await enviarPasso({
+    ...payloadBase(correlacaoId, passo),
+    imagemRedigida: processadoPre.dataUrl,
+    redacaoIncompleta: false,
+    revisaoPrivacidadeNecessaria: revisaoPre,
+    sugestoesMascara: processadoPre.sugestoesMascara,
+    ocorridoEm: passo.acao.fim,
+  });
 
   // Padrão: PRE. Só troca para POST quando o alvo sinalizou UI transitória
   // (select/dropdown/menu/autocomplete/modal/popover) E a captura POST (com a
@@ -480,25 +453,27 @@ async function consolidarPasso(
     origem: "pre",
   };
 
-  if (pre.abreUiTransitoria && pre.posPromise) {
-    const pos = await pre.posPromise;
-    let motivoDescartePos: string | undefined;
-    if (!pos.frame) {
-      motivoDescartePos = "captureVisibleTab falhou no POST";
-    } else if (!pos.triggerRelatorio) {
-      motivoDescartePos = "frame de disparo não respondeu ao pedido de relatório POST (timeout)";
-    } else {
+  const motivoPost = pre.postNavegacaoPromise
+    ? await pre.postNavegacaoPromise
+    : false;
+  const navegouDepoisDaAcao = motivoPost === "navegacao";
+  const houveMudancaPosAcao = motivoPost === "mudanca";
+  const posPromise = navegouDepoisDaAcao || houveMudancaPosAcao
+    ? capturarPos(tabId, pre.triggerFrameId, 0)
+    : undefined;
+
+  if (posPromise) {
+    const pos = await posPromise;
+    if (pos.frame && pos.triggerRelatorio) {
       const resultadoPos = processarCaptura(
         pre.triggerFrameId,
-        pre.triggerUrl,
+        navegouDepoisDaAcao ? "" : pre.triggerUrl,
         pos.triggerRelatorio,
-        pre.alvoRect,
+        navegouDepoisDaAcao ? undefined : pre.alvoRect,
         pos.outros,
         tabId,
       );
-      if (resultadoPos.redacaoIncompleta || !resultadoPos.consolidado.viewportTopo) {
-        motivoDescartePos = "consolidação das sugestões POST ficou incompleta (sem viewport de topo)";
-      } else {
+      if (!resultadoPos.redacaoIncompleta && resultadoPos.consolidado.viewportTopo) {
         const processadoPos = await prepararCaptura(
           pos.frame,
           resultadoPos.consolidado.alvoRectTopo,
@@ -506,84 +481,32 @@ async function consolidarPasso(
           resultadoPos.consolidado.viewportTopo,
         );
         if (processadoPos) {
-          escolhido = {
+          const candidatoPost = {
             frame: pos.frame,
             consolidado: resultadoPos.consolidado,
             processado: processadoPos,
-            origem: "pos",
+            origem: "pos" as const,
           };
-        } else {
-          motivoDescartePos = "falha ao processar a captura do POST";
+          escolhido = selecionarCaptura(escolhido, candidatoPost, true).captura;
         }
       }
     }
-    // DIAGNOSTICO TEMP: por que um alvo sinalizado como abreUiTransitoria acabou
-    // (ou não) usando o screenshot POST — correlaciona com o log de conteudo.ts via diagId.
-    if (DIAGNOSTICO_ATIVO) {
-      console.info("[diag][servico] captura escolhida (alvo abre UI transitória)", {
-        diagId,
-        correlacaoId,
-        capturaEscolhida: escolhido.origem,
-        motivoDescartePos,
-      });
-    }
   }
 
-  const cons = escolhido.consolidado;
-  const processado = escolhido.processado;
-  const sugestoesMascara = processado.sugestoesMascara;
-  // revisaoPrivacidadeNecessaria agora significa "existem sugestões de
-  // máscara (ou incerteza de consolidação) para o usuário revisar" — nunca
-  // mais "detecção automática decidiu mascarar com menos certeza": NADA é
-  // mascarado automaticamente, então toda sugestão passa por revisão humana.
-  const revisaoPrivacidadeNecessaria = cons.revisaoNecessaria || sugestoesMascara.length > 0;
-  const motivosRevisao =
-    sugestoesMascara.length > 0
-      ? [
-          ...cons.motivos,
-          `${String(sugestoesMascara.length)} sugestão(ões) de máscara de privacidade para revisar`,
-        ]
-      : cons.motivos;
-
-  guardarRegistro({
-    correlacaoId,
-    tipoAcao: passo.acao.tipo,
-    seletor: passo.acao.alvo?.seletor,
-    pre: {
-      dataUrl: processado.dataUrl,
-      bytes: processado.bytes,
-      instante: escolhido.frame.instante,
-    },
-    origemCaptura: escolhido.origem,
-    redacaoIncompleta: false,
-    revisaoPrivacidadeNecessaria,
-    motivos: motivosRevisao,
-    sugestoesMascara,
-    ...(processado.caixaImagem ? { caixa: processado.caixaImagem } : {}),
-    escala: { x: processado.escalaX, y: processado.escalaY },
-  });
-
-  if (revisaoPrivacidadeNecessaria) {
-    registrarPassoComRevisao(tabId, passo, motivosRevisao);
-  }
-  if (DIAGNOSTICO_ATIVO) {
-    console.info("[diag][servico] enviando passo COM imagem", {
-      diagId,
-      correlacaoId,
-      revisaoPrivacidadeNecessaria,
-      sugestoesMascara: sugestoesMascara.length,
+  if (escolhido.origem === "pos") {
+    const cons = escolhido.consolidado;
+    const processado = escolhido.processado;
+    const revisaoPost = cons.revisaoNecessaria || processado.sugestoesMascara.length > 0;
+    await atualizarImagemPasso(correlacaoId, {
+      imagemRedigida: processado.dataUrl,
+      redacaoIncompleta: false,
+      revisaoPrivacidadeNecessaria: revisaoPost,
+      sugestoesMascara: processado.sugestoesMascara,
+      ocorridoEm: passo.acao.fim,
     });
+    return;
   }
-  // A partir daqui sempre existe screenshot: a imagem vai sempre junto, e vai
-  // sempre INTACTA (processado.dataUrl nunca é reprocessado/desenhado).
-  void enviarPasso({
-    ...payloadBase(correlacaoId, passo),
-    imagemRedigida: processado.dataUrl,
-    redacaoIncompleta: false,
-    revisaoPrivacidadeNecessaria,
-    sugestoesMascara,
-    ocorridoEm: passo.acao.fim,
-  });
+
 }
 
 async function processarMensagem(
@@ -591,6 +514,12 @@ async function processarMensagem(
   frameId: number,
   msg: MensagemCS,
 ): Promise<void> {
+  // Garante que `sessaoAtiva` já foi restaurada (ver comentário acima) antes
+  // de decidir se esta aba tem sessão — sem isto, o PRIMEIRO clique do
+  // usuário depois de um reinício do service worker (a causa mais comum de
+  // o worker acordar) podia chegar antes da restauração e ser descartado.
+  await restauracaoDaSessaoAtiva;
+
   if (msg.tipo === "relatorio") {
     pendentesRelatorio.get(tabId)?.get(frameId)?.(msg.relatorio);
     return;
@@ -598,39 +527,21 @@ async function processarMensagem(
 
   const sessao = sessaoAtiva;
   if (sessao === undefined || sessao.tabId !== tabId) {
-    // DIAGNOSTICO TEMP: sessão não ativa para esta aba => tudo é descartado aqui,
-    // antes até da normalização/relevância. Causa comum de "clique não virou passo".
-    if (DIAGNOSTICO_ATIVO) {
-      console.info("[diag][servico] mensagem ignorada: sem sessão ativa para a aba", {
-        diagId: "diagId" in msg ? msg.diagId : undefined,
-        tabId,
-        sessaoAtivaTabId: sessao?.tabId,
-      });
-    }
-    return; // a prova só roda na aba autorizada pelo clique na action
+    return;
+  }
+
+  if (msg.tipo === "mudanca-pos-acao") {
+    sinalizarMudancaPosAcao(tabId, msg.instanteApontar);
+    return;
   }
 
   if (msg.tipo === "gatilho") {
-    iniciarGatilho(tabId, sessao.windowId, frameId, msg);
+    iniciarGatilho(tabId, frameId, msg);
   }
 
   const passos = gravadorDaAba(tabId).receber(msg.evento);
-  // DIAGNOSTICO TEMP: resultado da normalização+relevância (núcleo) para este evento.
-  if (DIAGNOSTICO_ATIVO) {
-    console.info("[diag][servico] normalização/relevância", {
-      diagId: "diagId" in msg ? msg.diagId : undefined,
-      tipoEvento: msg.evento.tipo,
-      seletorAlvo: msg.evento.alvo?.seletor,
-      acionavel: msg.evento.alvo?.acionavel === true,
-      passosGerados: passos.length,
-      motivo:
-        passos.length === 0
-          ? "evento não fechou uma ação relevante ainda (aguardando ou descartado por avaliarPasso)"
-          : undefined,
-    });
-  }
   for (const passo of passos) {
-    await consolidarPasso(tabId, passo, "diagId" in msg ? msg.diagId : undefined);
+    await consolidarPasso(tabId, passo);
   }
 }
 
@@ -660,14 +571,8 @@ chrome.runtime.onConnect.addListener((porta) => {
   });
 });
 
-// Página de diagnóstico pede a lista de registros (imagens em memória).
-chrome.runtime.onMessage.addListener((mensagem, _remetente, responder) => {
-  if ((mensagem as { tipo?: string } | null)?.tipo === TIPO_LISTAR) {
-    const resposta: RespostaListar = { registros: Array.from(registrosProva.values()) };
-    responder(resposta);
-  }
-  return false;
-});
+// Web (PassoGuia) entrega o sessaoId diretamente ao abrir /gravacao — ver ponte-web.ts.
+iniciarPonteWeb();
 
 /**
  * Clique no ícone: encerra a sessão da aba (toggle) OU inicia — injetando o content
@@ -675,6 +580,18 @@ chrome.runtime.onMessage.addListener((mensagem, _remetente, responder) => {
  * estático e sem <all_urls>: só a aba clicada é instrumentada.
  */
 async function aoClicarNoIcone(tab: chrome.tabs.Tab): Promise<void> {
+  // permissions.request precisa começar dentro do gesto da action. É pedida
+  // uma única vez para permitir a reinjeção automática após navegar entre
+  // origens; ela não substitui nem controla a MediaStream do tabCapture.
+  const permissaoNavegacao = sessaoAtiva?.tabId === tab.id
+    ? Promise.resolve(true)
+    : solicitarPermissaoParaNavegacoes();
+
+  // Ver comentário em `restauracaoDaSessaoAtiva` — sem isto, clicar no ícone
+  // logo depois de um reinício do service worker podia "não ver" a sessão
+  // que na verdade só estava esperando ser restaurada.
+  await restauracaoDaSessaoAtiva;
+
   if (
     typeof tab.id !== "number" ||
     tab.id < 0 ||
@@ -689,7 +606,24 @@ async function aoClicarNoIcone(tab: chrome.tabs.Tab): Promise<void> {
 
   if (sessaoAtiva?.tabId === tabId) {
     sessaoAtiva = undefined;
+    void pararCapturaStream();
+    void marcarIconeInativo(tabId);
+    void limparSessaoAtivaPersistida(); // encerramento normal — não sobra estado persistido "preso".
     console.info("[extensao-gravador][sessao] encerrada; aba", tabId);
+    return;
+  }
+
+  const origemDoClique = origemDe(tab.url);
+  const origem = origemDoClique;
+
+  if (!(await permissaoNavegacao)) {
+    console.warn("[extensao-gravador][permissao] acesso para reinjeção entre origens não concedido");
+    return;
+  }
+
+  const streamIniciada = await iniciarCapturaStream(tabId);
+  if (!streamIniciada) {
+    console.error("[extensao-gravador][captura-stream][erro] sessão não iniciada sem stream de aba");
     return;
   }
 
@@ -702,7 +636,8 @@ async function aoClicarNoIcone(tab: chrome.tabs.Tab): Promise<void> {
         "—",
         resultado.motivo ?? "motivo desconhecido",
       );
-      return; // sem content script não há como capturar: sessão NÃO inicia
+      void pararCapturaStream();
+      return; // sem content script não há como capturar: sessão NÃO inicia (ícone segue normal)
     }
     abasInjetadas.add(tabId);
     console.info(
@@ -713,13 +648,22 @@ async function aoClicarNoIcone(tab: chrome.tabs.Tab): Promise<void> {
     );
   }
 
-  const origem = origemDe(tab.url);
   if (origem === "") {
     console.warn(
-      "[extensao-gravador][sessao] origem da sessão não pôde ser determinada; qualquer navegação encerrará a sessão",
+      "[extensao-gravador][sessao] origem da sessão não pôde ser determinada; qualquer navegação pausará a sessão",
     );
   }
-  sessaoAtiva = { tabId, windowId: tab.windowId, origem };
+  const sitesAutorizados = origem !== "" ? [origem] : [];
+  sessaoAtiva = { tabId, windowId: tab.windowId, sitesAutorizados, pausada: false };
+  void marcarIconeAtivo(tabId);
+  void persistirSessaoAtiva({ tabId, windowId: tab.windowId, sitesAutorizados, pausada: false }); // sobrevive a um reinício do service worker.
+  // Identificação automática do sistema alvo: a API guarda essa origem na
+  // sessão (PATCH /sessoes/:sessaoId) — nunca pedida ao usuário em "Novo
+  // manual". Sem origem confirmável (acima), não há nada de real para
+  // reportar — nunca envia um valor mockado/fallback.
+  if (origem !== "") {
+    void atualizarOrigemDaSessao(origem);
+  }
   console.info(
     "[extensao-gravador][sessao] ativa; aba",
     tabId,
@@ -728,14 +672,12 @@ async function aoClicarNoIcone(tab: chrome.tabs.Tab): Promise<void> {
     "origem",
     origem || "(desconhecida)",
   );
-  console.info(
-    "[extensao-gravador][diagnostico] abra manualmente:",
-    chrome.runtime.getURL("diagnostico.html"),
-  );
 }
 
 chrome.action.onClicked.addListener((tab) => {
-  void aoClicarNoIcone(tab);
+  aoClicarNoIcone(tab).catch((erro: unknown) => {
+    console.error("[extensao-gravador][sessao][erro] falha ao alternar captura", erro);
+  });
 });
 
 function limparEstadoDaAba(tabId: number): void {
@@ -746,17 +688,6 @@ function limparEstadoDaAba(tabId: number): void {
   abasInjetadas.delete(tabId);
 }
 
-function encerrarPorOrigem(tabId: number, destino: string | undefined, origem: string): void {
-  sessaoAtiva = undefined;
-  limparEstadoDaAba(tabId);
-  console.info(
-    "[extensao-gravador][sessao] encerrada — navegação saiu da origem da sessão | origem:",
-    origem,
-    "| destino:",
-    destino ?? "(origem não confirmável — activeTab provavelmente revogado)",
-  );
-}
-
 /** Campos de chrome.tabs.onUpdated realmente usados aqui. */
 interface InfoNavegacao {
   status?: string;
@@ -765,14 +696,24 @@ interface InfoNavegacao {
 
 /**
  * Lifecycle de navegação da aba:
- *  - mesma origem: mantém a sessão, limpa o estado do documento antigo e reinjeta ao completar;
- *  - outra origem (ou não confirmável): encerra a sessão com log claro.
+ *  - mesma origem autorizada: mantém a sessão, limpa o estado do documento
+ *    antigo e reinjeta ao completar;
+ *  - qualquer navegação web: mantém a sessão e reinjeta o content script
+ *    automaticamente quando o novo documento termina de carregar.
  */
 async function aoAtualizarAba(tabId: number, changeInfo: InfoNavegacao): Promise<void> {
   const status = changeInfo.status;
   if (status !== "loading" && status !== "complete") {
+    if (changeInfo.url && sessaoAtiva?.tabId === tabId && !sessaoAtiva.pausada) {
+      setTimeout(() => sinalizarNavegacaoParaPost(tabId), ATRASO_DEBOUNCE_NAVEGACAO_MS);
+    }
     return; // pushState / título / favicon: content script segue vivo
   }
+
+  // Ver comentário em `restauracaoDaSessaoAtiva` — um evento de navegação
+  // pode chegar antes da restauração terminar, logo depois de um reinício
+  // do service worker.
+  await restauracaoDaSessaoAtiva;
 
   const sessao = sessaoAtiva;
   if (sessao?.tabId !== tabId) {
@@ -783,29 +724,28 @@ async function aoAtualizarAba(tabId: number, changeInfo: InfoNavegacao): Promise
   }
 
   if (status === "loading") {
-    // Sinal rápido e confiável: se o changeInfo já traz uma URL de outra origem, encerra.
-    if (changeInfo.url && !mesmaOrigem(changeInfo.url, sessao.origem)) {
-      encerrarPorOrigem(tabId, changeInfo.url, sessao.origem);
-      return;
-    }
-    // Documento antigo saindo: limpa estado do doc (incl. abasInjetadas), preserva a sessão.
+    registrarNavegacaoIniciada(tabId);
+    // Documento antigo saindo: limpa estado do documento, preserva a sessão
+    // e deixa a captura tabCapture atravessar a navegação.
     limparEstadoDaAba(tabId);
     return;
   }
 
   // status === "complete": decide de forma autoritativa pela URL atual da aba.
   const urlAtual = await urlDaAba(tabId);
-  if (!mesmaOrigem(urlAtual, sessao.origem)) {
-    encerrarPorOrigem(tabId, urlAtual, sessao.origem);
+  const decisaoCompleta = decidirNavegacao(sessao.sitesAutorizados, urlAtual);
+  if (decisaoCompleta.tipo === "manter-url-desconhecida") {
     return;
   }
   if (abasInjetadas.has(tabId)) {
+    await aguardar(ATRASO_DEBOUNCE_NAVEGACAO_MS);
+    sinalizarNavegacaoParaPost(tabId);
     return; // já injetado neste documento
   }
   const resultado = await injetarNaAba(tabId);
   if (!resultado.ok) {
     console.error(
-      "[extensao-gravador][injecao][erro] reinjeção same-origin falhou em",
+      "[extensao-gravador][injecao][erro] reinjeção same-site falhou em",
       urlAtual ?? "(url indisponível)",
       "—",
       resultado.motivo ?? "motivo desconhecido",
@@ -813,21 +753,33 @@ async function aoAtualizarAba(tabId: number, changeInfo: InfoNavegacao): Promise
     return;
   }
   abasInjetadas.add(tabId);
+  // Reforça o ícone laranja após a reinjeção: o setIcon por tabId de antes da
+  // navegação nem sempre sobrevive à troca de documento — sem isto, a aba
+  // podia voltar a mostrar o ícone normal mesmo com a sessão ainda ativa.
+  void marcarIconeAtivo(tabId);
   console.info(
-    "[extensao-gravador][injecao] conteudo.js reinjetado (navegação same-origin); aba",
+    "[extensao-gravador][injecao] conteudo.js reinjetado (navegação same-site); aba",
     tabId,
-    `— ${resultado.frames} frame(s) | ${sessao.origem}`,
+    `— ${resultado.frames} frame(s) | ${sessao.sitesAutorizados.join(", ")}`,
   );
+  await aguardar(ATRASO_DEBOUNCE_NAVEGACAO_MS);
+  sinalizarNavegacaoParaPost(tabId);
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  void aoAtualizarAba(tabId, changeInfo);
+  aoAtualizarAba(tabId, changeInfo).catch((erro: unknown) => {
+    console.error("[extensao-gravador][navegacao][erro] falha ao processar atualização", erro);
+  });
 });
 
 // Fechamento da aba.
 chrome.tabs.onRemoved.addListener((tabId) => {
   limparEstadoDaAba(tabId);
-  if (sessaoAtiva?.tabId === tabId) {
-    sessaoAtiva = undefined;
-  }
+  void restauracaoDaSessaoAtiva.then(() => {
+    if (sessaoAtiva?.tabId === tabId) {
+      sessaoAtiva = undefined;
+      void pararCapturaStream();
+      void limparSessaoAtivaPersistida(); // encerramento normal (aba fechada) — nunca sobra estado persistido "preso".
+    }
+  });
 });

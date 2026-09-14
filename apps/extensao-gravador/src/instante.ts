@@ -5,7 +5,11 @@
  */
 export function instanteComum(evento: Event): number {
   try {
-    const base = performance.timeOrigin + evento.timeStamp;
+    // performance.timeOrigin e evento.timeStamp são DOMHighResTimeStamp
+    // (fracionários) — a API guarda ocorridoEm em coluna BigInt e rejeita
+    // qualquer valor não-inteiro (ver validarPassoRecebido), então a soma
+    // precisa ser arredondada aqui.
+    const base = Math.round(performance.timeOrigin + evento.timeStamp);
     if (Number.isFinite(base) && base > 0) {
       return base;
     }

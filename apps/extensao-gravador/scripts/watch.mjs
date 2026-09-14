@@ -5,7 +5,6 @@ import { context } from "esbuild";
 const alvos = [
   { entryPoints: ["src/servico.ts"], format: "esm", outfile: "dist/servico.js" },
   { entryPoints: ["src/conteudo.ts"], format: "iife", outfile: "dist/conteudo.js" },
-  { entryPoints: ["src/diagnostico.ts"], format: "iife", outfile: "dist/diagnostico.js" },
 ];
 
 const contextos = await Promise.all(

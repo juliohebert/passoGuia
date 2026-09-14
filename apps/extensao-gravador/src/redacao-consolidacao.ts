@@ -68,7 +68,7 @@ export function consolidarRedacao(
   triggerFrameId: number,
   triggerUrl: string,
   triggerRelatorio: RelatorioFrame,
-  triggerAlvoRect: Retangulo,
+  triggerAlvoRect: Retangulo | undefined,
   outros: Map<number, RelatorioFrame>,
   urlsPorFrame: Map<number, string>,
 ): Consolidado {
@@ -167,8 +167,10 @@ export function consolidarRedacao(
     const iframeDoTrigger = relTopo.iframes.find(
       (f) => alvoUrl !== "" && normalizarUrl(f.src) === alvoUrl,
     );
-    if (iframeDoTrigger) {
+    if (iframeDoTrigger && triggerAlvoRect) {
       alvoRectTopo = deslocar(triggerAlvoRect, iframeDoTrigger.rect.x, iframeDoTrigger.rect.y);
+    } else if (iframeDoTrigger) {
+      // POST de uma navegação não tem alvo válido na tela de destino.
     } else {
       motivos.push("frame do clique não localizável no frame de topo — destaque do alvo omitido");
     }

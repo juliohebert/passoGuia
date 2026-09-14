@@ -8,6 +8,7 @@ import { ArrowLeft, Blocks, Puzzle } from "lucide-react";
 import { Botao } from "@/componentes/botao";
 import { Cartao } from "@/componentes/cartao";
 import { CartaoModo } from "@/componentes/cartao-modo";
+import { criarSessao } from "@/dados/api-gravacao";
 import { projetos } from "@/dados/projetos";
 import type { ModoCaptura } from "@/dominio/tipos";
 
@@ -26,17 +27,32 @@ function Campo({ rotulo, children }: { rotulo: string; children: ReactNode }) {
 export default function PaginaNovoManual() {
   const router = useRouter();
   const [nome, setNome] = useState("");
-  const [url, setUrl] = useState("");
   const [projeto, setProjeto] = useState(projetos[0]?.id ?? "");
   const [modo, setModo] = useState<ModoCaptura>("extensao");
+  const [criando, setCriando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
 
-  const podeContinuar = nome.trim().length > 0;
+  const podeContinuar = nome.trim().length > 0 && !criando;
 
-  function continuar() {
+  async function continuar() {
+    const nomeLimpo = nome.trim();
+    if (nomeLimpo === "") {
+      return;
+    }
+    setCriando(true);
+    setErro(null);
+    // Sem URL: o sistema alvo é identificado automaticamente pela extensão
+    // ao ativar a captura (ver PATCH /sessoes/:sessaoId), nunca digitado aqui.
+    const sessao = await criarSessao({ nome: nomeLimpo, modo });
+    setCriando(false);
+    if (!sessao) {
+      setErro("Não foi possível criar o manual. Tente novamente.");
+      return;
+    }
     const params = new URLSearchParams({
+      sessaoId: sessao.sessaoId,
       modo,
-      nome: nome.trim(),
-      url: url.trim(),
+      nome: nomeLimpo,
       projeto,
     });
     router.push(`/preparar-captura?${params.toString()}`);
@@ -66,17 +82,6 @@ export default function PaginaNovoManual() {
               setNome(evento.target.value);
             }}
             placeholder="Ex.: Emitir nota fiscal de serviço"
-            className={classeCampo}
-          />
-        </Campo>
-        <Campo rotulo="URL do sistema">
-          <input
-            type="url"
-            value={url}
-            onChange={(evento) => {
-              setUrl(evento.target.value);
-            }}
-            placeholder="https://sistema.suaempresa.com"
             className={classeCampo}
           />
         </Campo>
@@ -134,9 +139,16 @@ export default function PaginaNovoManual() {
         </div>
       </div>
 
-      <div className="flex justify-end">
-        <Botao tamanho="grande" disabled={!podeContinuar} onClick={continuar}>
-          Continuar
+      <div className="flex flex-col items-end gap-2">
+        {erro ? <p className="text-sm text-rose-600">{erro}</p> : null}
+        <Botao
+          tamanho="grande"
+          disabled={!podeContinuar}
+          onClick={() => {
+            void continuar();
+          }}
+        >
+          {criando ? "Criando…" : "Continuar"}
         </Botao>
       </div>
     </div>
